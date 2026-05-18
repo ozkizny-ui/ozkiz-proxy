@@ -6,47 +6,67 @@ export default async function handler(req, res) {
   const MALL_ID  = process.env.CAFE24_MALL_ID;
   const KV_URL   = process.env.KV_REST_API_URL;
   const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+  const PRESALE_KEYWORD = '순차출고';
 
-  // Redis에서 Access Token 가져오기
-  const getToken = async () => {
+  try {
     const r = await fetch(`${KV_URL}/get/cafe24_access_token`, {
       headers: { Authorization: `Bearer ${KV_TOKEN}` },
     });
     const data = await r.json();
-    return data.result;
-  };
-
-  try {
-    let token = await getToken();
+    const token = data.result;
     if (!token) return res.status(401).json({ error: '카페24 인증이 필요합니다.' });
 
-    // 예약판매 상품 조회 (sold_out_type이 P인 상품)
-    const presaleNames = new Set();
+    // 전체 상품 목록 수집 (product_no + product_name)
+    const allProducts = []; // { product_no, product_name }
+    const presaleProductNos = new Set();
     let offset = 0;
     const limit = 100;
 
     while (true) {
-      const r = await fetch(
-        `https://${MALL_ID}.cafe24api.com/api/v2/admin/products?limit=${limit}&offset=${offset}` +
-        `&sold_out_type=P`,
+      const r2 = await fetch(
+        `https://${MALL_ID}.cafe24api.com/api/v2/admin/products` +
+        `?limit=${limit}&offset=${offset}&fields=product_no,product_name,options`,
         { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
       );
-      const data = await r.json();
+      const d2 = await r2.json();
 
-      if (data.error) {
-        // 토큰 만료 시 401
-        return res.status(401).json({ error: '토큰이 만료됐습니다. 재인증이 필요합니다.' });
+      if (d2.error) {
+        return res.status(401).json({ error: d2.error.message || '토큰 오류' });
       }
 
-      const products = data.products || [];
-      products.forEach(p => presaleNames.add(p.product_name));
+      const products = d2.products || [];
+
+      products.forEach(p => {
+        const nameMatch = (p.product_name || '').includes(PRESALE_KEYWORD);
+        let optionMatch = false;
+        if (p.options && Array.isArray(p.options)) {
+          optionMatch = p.options.some(opt =>
+            (opt.option_name || '').includes(PRESALE_KEYWORD) ||
+            (opt.option_value || []).some(v =>
+              (v.option_text || '').includes(PRESALE_KEYWORD)
+            )
+          );
+        }
+
+        // 전체 상품 목록 저장 (매칭용)
+        allProducts.push({
+          product_no: String(p.product_no),
+          product_name: p.product_name || '',
+        });
+
+        if (nameMatch || optionMatch) {
+          presaleProductNos.add(String(p.product_no));
+        }
+      });
+
       if (products.length < limit) break;
       offset += limit;
     }
 
     return res.status(200).json({
-      presale_products: [...presaleNames],
-      count: presaleNames.size,
+      presale_product_nos: [...presaleProductNos],
+      all_products: allProducts, // 전체 상품 목록 (이지어드민 매칭용)
+      count: presaleProductNos.size,
     });
   } catch (e) {
     return res.status(500).json({ error: e.message });
