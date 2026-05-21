@@ -20,7 +20,7 @@ export default async function handler(req, res) {
       const body = {
         filter: {
           property: '입고일',
-          date: { is_not_empty: true },
+          date: { on_or_after: today },
         },
         page_size: 100,
       };
