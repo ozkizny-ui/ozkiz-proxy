@@ -24,7 +24,7 @@ export default async function handler(req, res) {
       const kstNow = new Date(now.getTime() + kstOffset);
       const today = kstNow.toISOString().split("T")[0]; // KST 기준 오늘
       const fields = [
-        "id", "name", "status", "daily_budget",
+        "id", "name", "status", "effective_status", "daily_budget",
         `insights.time_range({"since":"${today}","until":"${today}"})` +
         `{spend,purchase_roas,impressions,actions,action_values}`
       ].join(",");
