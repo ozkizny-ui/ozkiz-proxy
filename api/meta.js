@@ -30,7 +30,7 @@ export default async function handler(req, res) {
       ].join(",");
       const r = await fetch(
         `${META_BASE}/${AD_ACCOUNT}/ads?access_token=${META_TOKEN}` +
-        `&fields=${encodeURIComponent(fields)}&limit=200&filtering=[{"field":"status","operator":"IN","value":["ACTIVE"]}]`
+        `&fields=${encodeURIComponent(fields)}&limit=200`
       );
       const data = await r.json();
       if (data.error) return res.status(400).json({ error: data.error.message });
