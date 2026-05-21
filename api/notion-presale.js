@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const NOTION_TOKEN = process.env.NOTION_API_TOKEN;
-  const NOTION_DB_ID = 'c64f69e141c54909958acfee8f6606f3';
+  const NOTION_DB_ID = '5d2ae3562c064494b6b1f0fc6469aa8a';
 
   if (!NOTION_TOKEN) {
     return res.status(500).json({ error: 'NOTION_API_TOKEN not configured' });
