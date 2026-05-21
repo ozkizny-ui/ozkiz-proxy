@@ -19,14 +19,18 @@ export default async function handler(req, res) {
 
     // ── 기존: 광고 목록 조회 ──────────────────────────────────────
     if (action === "get_ads") {
-      const { hours = 4 } = req.query;
       const now   = new Date();
-      const since = new Date(now - hours * 3600 * 1000).toISOString().split("T")[0];
-      const until = now.toISOString().split("T")[0];
+      const kstOffset = 9 * 60 * 60 * 1000;
+      const kstNow = new Date(now.getTime() + kstOffset);
+      const today = kstNow.toISOString().split("T")[0]; // KST 기준 오늘
+      const fields = [
+        "id", "name", "status", "daily_budget",
+        `insights.time_range({"since":"${today}","until":"${today}"})` +
+        `{spend,purchase_roas,impressions,actions,action_values}`
+      ].join(",");
       const r = await fetch(
         `${META_BASE}/${AD_ACCOUNT}/ads?access_token=${META_TOKEN}` +
-        `&fields=id,name,status,daily_budget,insights.time_range(%7B%22since%22%3A%22${since}%22%2C%22until%22%3A%22${until}%22%7D)` +
-        `%7Bspend,purchase_roas,impressions%7D&limit=200`
+        `&fields=${encodeURIComponent(fields)}&limit=200&filtering=[{"field":"status","operator":"IN","value":["ACTIVE"]}]`
       );
       const data = await r.json();
       if (data.error) return res.status(400).json({ error: data.error.message });
