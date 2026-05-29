@@ -154,10 +154,35 @@ export default async function handler(req, res) {
     },
   ];
 
-  // 현재 시각 기준 발동할 규칙 (±5분 이내)
+  const SB_URL = process.env.SUPABASE_URL || 'https://baucagnqmtmaqlybjyzc.supabase.co';
+  const SB_KEY = process.env.SUPABASE_ANON_KEY;
+  const sbHeaders = SB_KEY ? {
+    'apikey': SB_KEY,
+    'Authorization': `Bearer ${SB_KEY}`,
+    'Content-Type': 'application/json',
+  } : null;
+
+  // Supabase에서 규칙 커스터마이즈 불러오기 (trigger_min, disabled)
+  if (sbHeaders) {
+    try {
+      const rulesRes = await fetch(`${SB_URL}/rest/v1/budget_rules?select=id,trigger_min,disabled`, { headers: sbHeaders });
+      const rulesData = await rulesRes.json();
+      if (Array.isArray(rulesData)) {
+        rulesData.forEach(r => {
+          const rule = BUDGET_RULES.find(br => br.id === r.id);
+          if (rule) {
+            if (r.trigger_min !== null) rule.triggerMin = r.trigger_min;
+            if (r.disabled !== null) rule.disabled = r.disabled;
+          }
+        });
+      }
+    } catch(e) { console.log('규칙 Supabase 로드 실패:', e); }
+  }
+
+  // 현재 시각 기준 발동할 규칙 (±5분 이내, 비활성 제외)
   const WINDOW = 5;
   const activeRules = BUDGET_RULES.filter(r =>
-    Math.abs(r.triggerMin - nowMin) <= WINDOW
+    !r.disabled && Math.abs(r.triggerMin - nowMin) <= WINDOW
   );
 
   if (!activeRules.length) {
