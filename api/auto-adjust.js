@@ -268,6 +268,25 @@ export default async function handler(req, res) {
       }
     }
 
+    // Supabase에 실행 로그 저장
+    if (sbHeaders && results.length) {
+      const logs = results.map(r => ({
+        rule_id: r.ruleId,
+        rule_label: r.ruleLabel,
+        ad_name: r.adName,
+        old_budget: r.oldBudget,
+        new_budget: r.newBudget,
+        success: r.success,
+      }));
+      try {
+        await fetch(`${SB_URL}/rest/v1/budget_rule_logs`, {
+          method: 'POST',
+          headers: { ...sbHeaders, 'Prefer': 'return=minimal' },
+          body: JSON.stringify(logs),
+        });
+      } catch(e) { console.log('로그 저장 실패:', e); }
+    }
+
     return res.status(200).json({
       time: timeLabel,
       activeRules: activeRules.map(r => r.label),
