@@ -38,31 +38,35 @@ export default async function handler(req, res) {
       return res.status(200).json(data);
     }
 
-    // ── 신규: 광고세트 단위 일자별 인사이트 (최근 N일, KST 어제까지) ──
+    // ── 신규: 광고세트 단위 일자별·시간대별 인사이트 (최근 N일, KST 오늘 포함) ──
     if (action === "get_adset_insights") {
-      // days: 기본 7. 쿼리스트링은 문자열이므로 정수 변환 후 1~90 범위로 클램프
-      const days = Math.min(Math.max(parseInt(req.query.days || "7", 10) || 7, 1), 90);
+      // days: 기본 3. 쿼리스트링은 문자열이므로 정수 변환 후 1~90 범위로 클램프
+      const days = Math.min(Math.max(parseInt(req.query.days || "3", 10) || 3, 1), 90);
 
-      // KST 기준 "어제"를 until 로, 거기서 N-1일 전을 since 로 (어제까지 최근 N일)
-      const kstNow     = new Date(Date.now() + 9 * 60 * 60 * 1000);
-      const yesterday  = new Date(kstNow.getTime() - 24 * 60 * 60 * 1000);
-      const until      = yesterday.toISOString().split("T")[0];
-      const sinceDate  = new Date(yesterday.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
-      const since      = sinceDate.toISOString().split("T")[0];
+      // KST 기준: 오늘을 until 로, 거기서 N-1일 전을 since 로 (오늘 포함 최근 N일)
+      const kstNow          = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const server_time_kst = kstNow.getUTCHours();          // 현재 KST 시(0~23)
+      const until           = kstNow.toISOString().split("T")[0];
+      const sinceDate       = new Date(kstNow.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+      const since           = sinceDate.toISOString().split("T")[0];
 
-      const fields   = ["adset_id", "adset_name", "spend", "actions", "action_values"].join(",");
-      const PURCHASE = "offsite_conversion.fb_pixel_purchase";
+      const fields         = ["adset_id", "adset_name", "spend", "actions", "action_values"].join(",");
+      const PURCHASE       = "offsite_conversion.fb_pixel_purchase";
+      const HOUR_BREAKDOWN = "hourly_stats_aggregated_by_advertiser_time_zone";
 
-      // 광고세트/일자 누락 방지: level=adset, time_increment=1, paging.next 끝까지 추적
+      // level=adset, time_increment=1(일자) + hourly breakdown(시간대),
+      // 1-day click 어트리뷰션 고정(광고관리자와 일치), paging.next 끝까지 추적
       let url =
         `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
         `&level=adset&time_increment=1` +
+        `&breakdowns=${HOUR_BREAKDOWN}` +
+        `&action_attribution_windows=${encodeURIComponent(JSON.stringify(["1d_click"]))}` +
         `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
-        `&fields=${encodeURIComponent(fields)}&limit=500`;
+        `&fields=${encodeURIComponent(fields)}&limit=1000`;
 
       const rows = [];
-      let guard = 0; // 무한루프 방지 (최대 50페이지)
-      while (url && guard < 50) {
+      let guard = 0; // 무한루프 방지 (최대 100페이지)
+      while (url && guard < 100) {
         const r = await fetch(url);
         const data = await r.json();
         if (data.error) return res.status(400).json({ error: data.error.message });
@@ -71,45 +75,97 @@ export default async function handler(req, res) {
         guard++;
       }
 
-      // offsite_conversion.fb_pixel_purchase 건수/값 추출
+      // offsite_conversion.fb_pixel_purchase의 1d_click 값 추출 (없으면 value 폴백)
       const pick = (arr) => {
         const a = (arr || []).find((x) => x.action_type === PURCHASE);
-        return a ? (parseFloat(a.value) || 0) : 0;
+        if (!a) return 0;
+        const v = a["1d_click"] != null ? a["1d_click"] : a.value;
+        return parseFloat(v) || 0;
       };
+      const roasOf = (spend, value) =>
+        spend > 0 ? Math.round((value / spend) * 1000) / 10 : null; // %, 소수 1자리
 
-      // adset_id 기준으로 일자 배열 묶기
+      // adset_id → date → hour 계층으로 묶기
       const map = new Map();
       for (const row of rows) {
         const id = row.adset_id;
         if (!map.has(id)) {
-          map.set(id, {
-            adset_id: id,
-            adset_name: row.adset_name || "",
-            days: [],
-            total: { spend: 0, purchases: 0, purchase_value: 0 },
-          });
+          map.set(id, { adset_id: id, adset_name: row.adset_name || "", _days: new Map() });
         }
-        const entry = map.get(id);
+        const a = map.get(id);
+
+        const date = row.date_start;
+        if (!a._days.has(date)) a._days.set(date, { date, _hours: new Map() });
+        const d = a._days.get(date);
+
+        // "06:00:00 - 06:59:59" → 6
+        const hourLabel = row[HOUR_BREAKDOWN] || "";
+        const hour = parseInt(hourLabel.split(":")[0], 10);
+        if (Number.isNaN(hour)) continue;
+
         const spend          = parseFloat(row.spend || 0) || 0;
         const purchases      = pick(row.actions);
         const purchase_value = pick(row.action_values);
-        entry.days.push({ date: row.date_start, spend, purchases, purchase_value });
-        entry.total.spend          += spend;
-        entry.total.purchases      += purchases;
-        entry.total.purchase_value += purchase_value;
+
+        // 동일 (date,hour) 중복 행 대비 누적
+        const prev = d._hours.get(hour) || { hour, spend: 0, purchases: 0, purchase_value: 0 };
+        prev.spend          += spend;
+        prev.purchases      += purchases;
+        prev.purchase_value += purchase_value;
+        d._hours.set(hour, prev);
       }
 
+      // 계층 정리 + 합계 계산
+      const round2 = (n) => Math.round(n * 100) / 100;
       const adsets = [...map.values()].map((a) => {
-        a.days.sort((x, y) => (x.date < y.date ? -1 : 1));
-        a.total.spend          = Math.round(a.total.spend * 100) / 100;
-        a.total.purchase_value = Math.round(a.total.purchase_value * 100) / 100;
-        a.total.roas = a.total.spend > 0
-          ? Math.round((a.total.purchase_value / a.total.spend) * 1000) / 10 // ROAS %, 소수 1자리
-          : null;
-        return a;
+        const dayArr = [...a._days.values()]
+          .sort((x, y) => (x.date < y.date ? -1 : 1))
+          .map((d) => {
+            const hours = [...d._hours.values()]
+              .sort((x, y) => x.hour - y.hour)
+              .map((h) => ({
+                hour: h.hour,
+                spend: round2(h.spend),
+                purchases: h.purchases,
+                purchase_value: round2(h.purchase_value),
+              }));
+            const dt = hours.reduce((s, h) => ({
+              spend:          s.spend + h.spend,
+              purchases:      s.purchases + h.purchases,
+              purchase_value: s.purchase_value + h.purchase_value,
+            }), { spend: 0, purchases: 0, purchase_value: 0 });
+            return {
+              date: d.date,
+              hours,
+              total: {
+                spend:          round2(dt.spend),
+                purchases:      dt.purchases,
+                purchase_value: round2(dt.purchase_value),
+                roas:           roasOf(dt.spend, dt.purchase_value),
+              },
+            };
+          });
+
+        const at = dayArr.reduce((s, d) => ({
+          spend:          s.spend + d.total.spend,
+          purchases:      s.purchases + d.total.purchases,
+          purchase_value: s.purchase_value + d.total.purchase_value,
+        }), { spend: 0, purchases: 0, purchase_value: 0 });
+
+        return {
+          adset_id: a.adset_id,
+          adset_name: a.adset_name,
+          days: dayArr,
+          total: {
+            spend:          round2(at.spend),
+            purchases:      at.purchases,
+            purchase_value: round2(at.purchase_value),
+            roas:           roasOf(at.spend, at.purchase_value),
+          },
+        };
       });
 
-      return res.status(200).json({ since, until, days, count: adsets.length, adsets });
+      return res.status(200).json({ since, until, days, count: adsets.length, server_time_kst, adsets });
     }
 
     // ── 기존: 예산 변경 ───────────────────────────────────────────
