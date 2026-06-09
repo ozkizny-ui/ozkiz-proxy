@@ -179,15 +179,55 @@ export default async function handler(req, res) {
     } catch(e) { console.log('규칙 Supabase 로드 실패:', e); }
   }
 
-  // 현재 시각 기준 발동할 규칙 (±5분 이내, 비활성 제외)
-  const WINDOW = 5;
+  // ── catch-up 발동 판정 (광고세트별 복합 dedup) ───────────────────
+  // GitHub cron이 수십 분 지연 도착해도 룰을 놓치지 않도록,
+  // "현재 ±5분"이 아니라 "오늘(KST) triggerMin이 이미 지난 룰"을 후보로 두고,
+  // 실제 중복 방지는 루프 안에서 (rule_id + adset_id) 복합키로 처리한다.
+  // → 같은 룰이라도 광고(adset)가 다르면 각각 발동, 같은 광고+같은 룰은 하루 1회.
+
+  // 오늘(KST) 자정에 해당하는 UTC 시각 → executed_at 필터 기준
+  const kstMidnightUtc = new Date(`${today}T00:00:00+09:00`).toISOString();
+
+  // 오늘 이미 실행(기록)된 `${rule_id}__${adset_id}` 복합키 집합. null = 조회 실패(=불확실)
+  let executedToday = null;
+  if (sbHeaders) {
+    try {
+      const logUrl = `${SB_URL}/rest/v1/budget_rule_logs` +
+        `?select=rule_id,adset_id,ad_name&executed_at=gte.${encodeURIComponent(kstMidnightUtc)}`;
+      const logRes = await fetch(logUrl, {
+        headers: { ...sbHeaders, 'Range-Unit': 'items', 'Range': '0-9999' },
+      });
+      if (logRes.ok) {
+        const logRows = await logRes.json();
+        executedToday = new Set((Array.isArray(logRows) ? logRows : []).map(x => {
+          // adset_id 없으면(과거 행) ad_name으로 폴백 — 키 생성이 깨지지 않게 방어
+          const target = (x.adset_id !== null && x.adset_id !== undefined && x.adset_id !== '')
+            ? x.adset_id : (x.ad_name || '');
+          return `${x.rule_id}__${target}`;
+        }));
+      }
+    } catch (e) { console.log('오늘 실행기록 조회 실패:', e); }
+  }
+
+  // 안전장치(READ 실패 fail-safe): 오늘 실행기록을 못 읽으면 발동하지 않는다.
+  // %증액 룰(r4a/b/c)은 중복 발동 시 예산이 복리로 늘어나므로,
+  // '못 읽으면 멈춘다'가 '모르고 또 올린다'보다 안전.
+  if (executedToday === null) {
+    return res.status(200).json({
+      message: `오늘 실행기록 조회 불가 → 안전상 미발동 (KST ${timeLabel})`,
+      nowMin,
+    });
+  }
+
+  // 발동 후보: 비활성 아님 + 오늘 triggerMin 지남(<= nowMin).
+  // 광고세트별 중복 방지는 루프 안 복합키 체크에서 수행.
   const activeRules = BUDGET_RULES.filter(r =>
-    !r.disabled && Math.abs(r.triggerMin - nowMin) <= WINDOW
+    !r.disabled && r.triggerMin <= nowMin
   );
 
   if (!activeRules.length) {
     return res.status(200).json({
-      message: `발동 규칙 없음 (KST ${timeLabel})`,
+      message: `발동 후보 룰 없음 (KST ${timeLabel})`,
       nowMin,
     });
   }
@@ -269,6 +309,8 @@ export default async function handler(req, res) {
         if (newBudget === budget) continue;
 
         const targetId = adsetId || ad.id;
+        // (catch-up 복합 dedup) 그 광고(adset)에 그 룰이 오늘 이미 돌았으면 건너뜀
+        if (executedToday.has(`${rule.id}__${targetId}`)) continue;
         if (updatedAdsets.has(targetId)) continue;
         updatedAdsets.add(targetId);
 
