@@ -196,7 +196,7 @@ export default async function handler(req, res) {
     // 오늘 광고 데이터 조회
     const fields = [
       'id', 'name', 'status', 'effective_status', 'daily_budget',
-      'adset{id,daily_budget}',
+      'adset{id,name,daily_budget}',
       `insights.time_range({"since":"${today}","until":"${today}"})` +
       `{spend,purchase_roas,impressions,actions,action_values}`,
     ].join(',');
@@ -213,6 +213,31 @@ export default async function handler(req, res) {
     const getAction = (actions, type) => {
       const a = (actions || []).find(a => a.action_type === type);
       return a ? parseFloat(a.value) : 0;
+    };
+
+    // ── (기록 전용) 목표 ROAS 밴드 & 발동 시점 판정 헬퍼 ───────────
+    // 예산 조정 로직과 무관. 기록용 verdict/verdict_reason 생성에만 사용.
+    // ROAS는 룰의 check가 쓰는 roas 변수(purchase_roas 기반)와 동일값을 받는다.
+    const TARGET_LOW = 250, TARGET_HIGH = 300, FAR_BELOW = 150;
+    const judgeVerdict = (roas, oldB, newB) => {
+      const up = newB > oldB, dn = newB < oldB;
+      const r2 = Math.round(roas);
+      const pct = oldB > 0 ? Math.round((newB - oldB) / oldB * 100) : 0;
+      const pctStr = (pct >= 0 ? '+' : '') + pct + '%';
+      // ROAS 목표 초과인데 증액 안 함(감액/유지) → 기회손실
+      if (roas > TARGET_HIGH && !up) {
+        return ['기회손실', `ROAS ${r2}%(목표 ${TARGET_HIGH}% 초과)인데 ${dn ? `${pctStr} 감액` : '예산 유지'}`];
+      }
+      // ROAS 목표 미만인데 증액 → 과잉증액
+      if (roas < TARGET_LOW && up) {
+        return ['과잉증액', `ROAS ${r2}%(목표 ${TARGET_LOW}% 미만)인데 ${pctStr} 증액`];
+      }
+      // ROAS 한참 미만(<150%)인데 안 줄이거나 10% 미만 찔끔 감액 → 과소감액
+      if (roas < FAR_BELOW && (!dn || newB > oldB * 0.9)) {
+        return ['과소감액', `ROAS ${r2}%(${FAR_BELOW}% 한참 미만)인데 ${dn ? `${pctStr} 소폭 감액` : '감액 안 함'}`];
+      }
+      // 그 외 의도 부합
+      return ['정상', `ROAS ${r2}% · ${pctStr} (${up ? '증액' : dn ? '감액' : '유지'}) 의도 부합`];
     };
 
     // 규칙 적용
@@ -255,6 +280,23 @@ export default async function handler(req, res) {
         });
         const updateData = await updateRes.json();
 
+        // ── (기록 전용) 발동 시점 스냅샷 + 판정 ──────────────────
+        // ROAS는 룰의 check가 본 roas 변수를 그대로 사용 → 룰이 본 값 = 기록값 = 판정근거 일치.
+        // 실패해도 예산 조정/루프에 영향 없도록 try/catch로 감쌈.
+        let snap = {};
+        try {
+          const [verdict, verdictReason] = judgeVerdict(roas, budget, newBudget);
+          snap = {
+            adsetId: adsetId || null,
+            adsetName: ad.adset?.name || null,
+            spendAtTrigger: spend,
+            valueAtTrigger: purchaseValue,
+            roasAtTrigger: roas,
+            verdict,
+            verdictReason,
+          };
+        } catch (e) { console.log('판정 계산 실패:', e); }
+
         results.push({
           adName: productName,
           ruleId: rule.id,
@@ -263,6 +305,7 @@ export default async function handler(req, res) {
           newBudget,
           success: !updateData.error,
           error: updateData.error?.message,
+          ...snap,
         });
         break;
       }
@@ -270,13 +313,22 @@ export default async function handler(req, res) {
 
     // Supabase에 실행 로그 저장
     if (sbHeaders && results.length) {
+      const executedAt = new Date().toISOString();
       const logs = results.map(r => ({
         rule_id: r.ruleId,
         rule_label: r.ruleLabel,
         ad_name: r.adName,
+        adset_id: r.adsetId ?? null,
+        adset_name: r.adsetName ?? null,
         old_budget: r.oldBudget,
         new_budget: r.newBudget,
         success: r.success,
+        executed_at: executedAt,
+        spend_at_trigger: r.spendAtTrigger ?? null,
+        value_at_trigger: r.valueAtTrigger ?? null,
+        roas_at_trigger: r.roasAtTrigger ?? null,
+        verdict: r.verdict ?? null,
+        verdict_reason: r.verdictReason ?? null,
       }));
       try {
         await fetch(`${SB_URL}/rest/v1/budget_rule_logs`, {
