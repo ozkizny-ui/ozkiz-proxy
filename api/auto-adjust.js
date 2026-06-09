@@ -219,10 +219,13 @@ export default async function handler(req, res) {
     });
   }
 
-  // 발동 후보: 비활성 아님 + 오늘 triggerMin 지남(<= nowMin).
+  // 발동 후보: 비활성 아님 + 오늘 triggerMin 지남 + 지난 지 CATCHUP_WINDOW분 이내.
   // 광고세트별 중복 방지는 루프 안 복합키 체크에서 수행.
+  // CATCHUP_WINDOW: cron 지연(30~70분)은 흡수하되, 몇 시간 전 룰을 지금 데이터로
+  //   소환하지 않도록 따라잡기 창을 제한 (분 단위, 조정 가능).
+  const CATCHUP_WINDOW = 60;
   const activeRules = BUDGET_RULES.filter(r =>
-    !r.disabled && r.triggerMin <= nowMin
+    !r.disabled && r.triggerMin <= nowMin && (nowMin - r.triggerMin) <= CATCHUP_WINDOW
   );
 
   if (!activeRules.length) {
