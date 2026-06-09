@@ -38,6 +38,80 @@ export default async function handler(req, res) {
       return res.status(200).json(data);
     }
 
+    // ── 신규: 광고세트 단위 일자별 인사이트 (최근 N일, KST 어제까지) ──
+    if (action === "get_adset_insights") {
+      // days: 기본 7. 쿼리스트링은 문자열이므로 정수 변환 후 1~90 범위로 클램프
+      const days = Math.min(Math.max(parseInt(req.query.days || "7", 10) || 7, 1), 90);
+
+      // KST 기준 "어제"를 until 로, 거기서 N-1일 전을 since 로 (어제까지 최근 N일)
+      const kstNow     = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const yesterday  = new Date(kstNow.getTime() - 24 * 60 * 60 * 1000);
+      const until      = yesterday.toISOString().split("T")[0];
+      const sinceDate  = new Date(yesterday.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+      const since      = sinceDate.toISOString().split("T")[0];
+
+      const fields   = ["adset_id", "adset_name", "spend", "actions", "action_values"].join(",");
+      const PURCHASE = "offsite_conversion.fb_pixel_purchase";
+
+      // 광고세트/일자 누락 방지: level=adset, time_increment=1, paging.next 끝까지 추적
+      let url =
+        `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
+        `&level=adset&time_increment=1` +
+        `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
+        `&fields=${encodeURIComponent(fields)}&limit=500`;
+
+      const rows = [];
+      let guard = 0; // 무한루프 방지 (최대 50페이지)
+      while (url && guard < 50) {
+        const r = await fetch(url);
+        const data = await r.json();
+        if (data.error) return res.status(400).json({ error: data.error.message });
+        if (Array.isArray(data.data)) rows.push(...data.data);
+        url = data.paging?.next || null;
+        guard++;
+      }
+
+      // offsite_conversion.fb_pixel_purchase 건수/값 추출
+      const pick = (arr) => {
+        const a = (arr || []).find((x) => x.action_type === PURCHASE);
+        return a ? (parseFloat(a.value) || 0) : 0;
+      };
+
+      // adset_id 기준으로 일자 배열 묶기
+      const map = new Map();
+      for (const row of rows) {
+        const id = row.adset_id;
+        if (!map.has(id)) {
+          map.set(id, {
+            adset_id: id,
+            adset_name: row.adset_name || "",
+            days: [],
+            total: { spend: 0, purchases: 0, purchase_value: 0 },
+          });
+        }
+        const entry = map.get(id);
+        const spend          = parseFloat(row.spend || 0) || 0;
+        const purchases      = pick(row.actions);
+        const purchase_value = pick(row.action_values);
+        entry.days.push({ date: row.date_start, spend, purchases, purchase_value });
+        entry.total.spend          += spend;
+        entry.total.purchases      += purchases;
+        entry.total.purchase_value += purchase_value;
+      }
+
+      const adsets = [...map.values()].map((a) => {
+        a.days.sort((x, y) => (x.date < y.date ? -1 : 1));
+        a.total.spend          = Math.round(a.total.spend * 100) / 100;
+        a.total.purchase_value = Math.round(a.total.purchase_value * 100) / 100;
+        a.total.roas = a.total.spend > 0
+          ? Math.round((a.total.purchase_value / a.total.spend) * 1000) / 10 // ROAS %, 소수 1자리
+          : null;
+        return a;
+      });
+
+      return res.status(200).json({ since, until, days, count: adsets.length, adsets });
+    }
+
     // ── 기존: 예산 변경 ───────────────────────────────────────────
     if (action === "update_budget") {
       const { ad_id, daily_budget } = req.body;
