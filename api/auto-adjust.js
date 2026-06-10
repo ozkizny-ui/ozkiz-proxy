@@ -24,6 +24,19 @@ export default async function handler(req, res) {
   const today  = kstNow.toISOString().split('T')[0];
   const timeLabel = `${kstNow.getUTCHours() < 12 ? '오전' : '오후'} ${String(kstNow.getUTCHours() > 12 ? kstNow.getUTCHours()-12 : kstNow.getUTCHours()).padStart(1)}:${String(kstNow.getUTCMinutes()).padStart(2,'0')}`;
 
+  // ── 운영시간 가드 (KST 08:00~21:30 밖이면 무조건 미발동) ─────────
+  // 스케줄러를 외부(Vercel Cron 등)로 옮기므로, 잘못된 호출·키 유출 시에도
+  // 운영시간 밖에선 어떤 룰도 안 돌도록 코드 레벨에서 방어.
+  // 모든 룰의 triggerMin(08:00~21:00)을 포함하고, 따라잡기 여유로 21:30까지 허용.
+  const OPEN_MIN = 8 * 60;        // 08:00
+  const CLOSE_MIN = 21 * 60 + 30; // 21:30
+  if (nowMin < OPEN_MIN || nowMin > CLOSE_MIN) {
+    return res.status(200).json({
+      message: `운영시간 외 미발동 (KST ${timeLabel})`,
+      nowMin,
+    });
+  }
+
   // ── 예산 규칙 정의 ──────────────────────────────────────────────
   const BUDGET_RULES = [
     {
