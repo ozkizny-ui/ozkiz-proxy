@@ -168,7 +168,15 @@ export default async function handler(req, res) {
   ];
 
   const SB_URL = process.env.SUPABASE_URL || 'https://baucagnqmtmaqlybjyzc.supabase.co';
-  const SB_KEY = process.env.SUPABASE_ANON_KEY;
+  // 서버 전용 service role 키로 통일 — RLS를 우회하므로 읽기(오늘 실행기록 dedup)·
+  // 쓰기(budget_rule_logs insert) 모두 RLS 정책 영향 없이 동작.
+  // ⚠️ 이 키는 auto-adjust(Vercel 서버) 전용. 하드코딩 금지, 브라우저(index.html 등)엔 절대 노출 금지(거긴 anon 유지).
+  // anon 폴백 없음: 폴백이 타면 insert가 RLS(42501)로 실패 → dedup 무력화 → 예산 왕복이 조용히 재발할 수 있음.
+  // 키가 없으면 SB_KEY=undefined → 아래 sbHeaders=null → 기존 fail-safe(예산 조정 미발동)로 멈추는 게 안전.
+  const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!SB_KEY) {
+    console.warn('SUPABASE_SERVICE_ROLE_KEY 없음 → 안전상 미발동(sbHeaders=null, 예산 조정 안 함).');
+  }
   const sbHeaders = SB_KEY ? {
     'apikey': SB_KEY,
     'Authorization': `Bearer ${SB_KEY}`,
@@ -398,12 +406,20 @@ export default async function handler(req, res) {
         verdict_reason: r.verdictReason ?? null,
       }));
       try {
-        await fetch(`${SB_URL}/rest/v1/budget_rule_logs`, {
+        const logRes = await fetch(`${SB_URL}/rest/v1/budget_rule_logs`, {
           method: 'POST',
           headers: { ...sbHeaders, 'Prefer': 'return=minimal' },
           body: JSON.stringify(logs),
         });
-      } catch(e) { console.log('로그 저장 실패:', e); }
+        // ⚠️ fetch는 4xx/5xx에도 reject하지 않는다. 반드시 response.ok를 직접 확인할 것.
+        //    (이 검사가 빠져 있어 RLS 42501 거부가 조용히 통과돼 로그가 0행이었음.)
+        if (logRes.ok) {
+          console.log(`budget_rule_logs 저장 성공: ${logs.length}건`);
+        } else {
+          const errBody = await logRes.text();
+          console.error(`budget_rule_logs 저장 실패: ${logRes.status} ${logRes.statusText} — ${errBody}`);
+        }
+      } catch(e) { console.error('budget_rule_logs 저장 예외:', e); }
     }
 
     return res.status(200).json({
