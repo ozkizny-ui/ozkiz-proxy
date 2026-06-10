@@ -219,14 +219,23 @@ export default async function handler(req, res) {
     });
   }
 
-  // 발동 후보: 비활성 아님 + 오늘 triggerMin 지남 + 지난 지 CATCHUP_WINDOW분 이내.
+  // 발동 후보: 비활성 아님 + 오늘 triggerMin 지남 + 지난 지 따라잡기 창(분) 이내.
   // 광고세트별 중복 방지는 루프 안 복합키 체크에서 수행.
-  // CATCHUP_WINDOW: cron 지연(30~70분)은 흡수하되, 몇 시간 전 룰을 지금 데이터로
-  //   소환하지 않도록 따라잡기 창을 제한 (분 단위, 조정 가능).
-  const CATCHUP_WINDOW = 60;
-  const activeRules = BUDGET_RULES.filter(r =>
-    !r.disabled && r.triggerMin <= nowMin && (nowMin - r.triggerMin) <= CATCHUP_WINDOW
-  );
+  //
+  // [근거] GitHub Actions가 */15 예약 호출의 70~80%를 드롭 → 실측 운영시간 최대 공백 278분,
+  //   저녁 룰이 trigger보다 +99~109분 늦게 도착(2026-06-09). 기존 60분 창은 룰의 57%를 놓침.
+  //
+  // [방향별 차등 창] cron 지연은 흡수하되, 몇 시간 전 룰을 지금 데이터로 소환하진 않도록 제한:
+  //   - 감액(dir:'dn') 150분 — 늦게 발동해도 "지금도 ROAS 낮으면 깎기"라 안전. 92% 커버.
+  //   - 증액(dir:'up')  75분 — 과거 시각에 좋았던 걸 지금 키우는 위험을 줄이려 보수적으로 짧게.
+  //                            (복리 증액 r4a/b/c는 복합키 dedup이 중복 발동 자체는 막아줌)
+  const CATCHUP_DN = 150;  // 감액 따라잡기 창(분)
+  const CATCHUP_UP = 75;   // 증액 따라잡기 창(분)
+  const activeRules = BUDGET_RULES.filter(r => {
+    if (r.disabled || r.triggerMin > nowMin) return false;
+    const win = r.dir === 'up' ? CATCHUP_UP : CATCHUP_DN;
+    return (nowMin - r.triggerMin) <= win;
+  });
 
   if (!activeRules.length) {
     return res.status(200).json({
