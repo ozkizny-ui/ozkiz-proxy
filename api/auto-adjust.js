@@ -150,13 +150,15 @@ export default async function handler(req, res) {
     {
       id: 'r14', triggerMin: 18*60+5, dir: 'up',
       label: '오후 6:05 · ROAS ≥400% → 구매전환값의 60%',
-      check: (ad) => ad.roas >= 400 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+      // budget≤pv 가드 제거: 허수 예산이 매출액보다 큰 과지출 상태(가장 위험)에서도 발동해 예산을 조이도록.
+      check: (ad) => ad.roas >= 400 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.6 / 1000) * 1000,
     },
     {
       id: 'r15', triggerMin: 18*60+10, dir: 'up',
       label: '오후 6:10 · ROAS ≥300% → 구매전환값의 50%',
-      check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+      // budget≤pv 가드 제거: 허수 예산이 매출액보다 큰 과지출 상태(가장 위험)에서도 발동해 예산을 조이도록.
+      check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
     },
     {
