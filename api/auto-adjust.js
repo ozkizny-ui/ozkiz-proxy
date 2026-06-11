@@ -292,9 +292,16 @@ export default async function handler(req, res) {
     // 예산 조정 로직과 무관. 기록용 verdict/verdict_reason 생성에만 사용.
     // ROAS는 룰의 check가 쓰는 roas 변수(purchase_roas 기반)와 동일값을 받는다.
     const TARGET_LOW = 250, TARGET_HIGH = 300, FAR_BELOW = 150;
-    const judgeVerdict = (roas, oldB, newB) => {
-      const up = newB > oldB, dn = newB < oldB;
+    const MIN_PURCHASES = 2; // 표본 신뢰 최소 구매 건수(2건 미만이면 ROAS 신뢰 불가)
+    const judgeVerdict = (roas, oldB, newB, purchases) => {
       const r2 = Math.round(roas);
+      // 표본부족 가드: 구매 2건 미만이면 ROAS가 1건의 우연에 좌우돼 신뢰 불가.
+      // ROAS 기반 판정(기회손실/과잉증액/과소감액/정상)을 전부 건너뛰고 판정 보류.
+      // 예) 구매 1건·ROAS 385% → 룰의 보수적 감액이 합리적인데 기존엔 "기회손실"로 오판했음.
+      if (purchases < MIN_PURCHASES) {
+        return ['표본부족', `구매 ${purchases}건, ROAS ${r2}%는 표본 부족으로 판정 보류`];
+      }
+      const up = newB > oldB, dn = newB < oldB;
       const pct = oldB > 0 ? Math.round((newB - oldB) / oldB * 100) : 0;
       const pctStr = (pct >= 0 ? '+' : '') + pct + '%';
       // ROAS 목표 초과인데 증액 안 함(감액/유지) → 기회손실
@@ -360,7 +367,7 @@ export default async function handler(req, res) {
         // 실패해도 예산 조정/루프에 영향 없도록 try/catch로 감쌈.
         let snap = {};
         try {
-          const [verdict, verdictReason] = judgeVerdict(roas, budget, newBudget);
+          const [verdict, verdictReason] = judgeVerdict(roas, budget, newBudget, purchases);
           snap = {
             adsetId: adsetId || null,
             adsetName: ad.adset?.name || null,
