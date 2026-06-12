@@ -125,8 +125,8 @@ export default async function handler(req, res) {
     },
     {
       id: 'r10', triggerMin: 15*60, dir: 'dn',
-      label: '오후 3:00 · ROAS ≤100% → 구매전환값의 50%',
-      check: (ad) => ad.roas <= 100 && ad.roas > 0 && ad.purchaseValue > 0,
+      label: '오후 3:00 · ROAS ≤200% → 구매전환값의 50%',
+      check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
     },
     {
@@ -349,9 +349,9 @@ export default async function handler(req, res) {
         if (!rule.check(adData)) continue;
         const newBudget = Math.max(rule.calc(adData), 1000);
         if (newBudget === budget) continue;
-        // r12·r16 감액 방향 가드: 감액 규칙인데 계산값이 현재 예산 이상(증액/동일)이면 발동 안 함.
+        // r10·r12·r16 감액 방향 가드: 감액 규칙인데 계산값이 현재 예산 이상(증액/동일)이면 발동 안 함.
         // (ROAS 100~200% 등에서 구매전환값 50%가 현재 예산보다 커 오히려 증액되던 문제 차단)
-        if ((rule.id === 'r12' || rule.id === 'r16') && newBudget >= budget) continue;
+        if ((rule.id === 'r10' || rule.id === 'r12' || rule.id === 'r16') && newBudget >= budget) continue;
 
         const targetId = adsetId || ad.id;
         // (catch-up 복합 dedup) 그 광고(adset)에 그 룰이 오늘 이미 돌았으면 건너뜀
