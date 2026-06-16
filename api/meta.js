@@ -17,6 +17,53 @@ export default async function handler(req, res) {
 
   try {
 
+    // ── [임시 진단 · 검증 후 제거] PA 릴스 URL → IG media id 해석 경로 탐색 ──
+    if (action === "pa_resolve_test") {
+      const reels_url = req.query.url || (req.body && req.body.url) || "";
+      const out = { reels_url, steps: {} };
+
+      // 1) shortcode 추출
+      const m = reels_url.match(/instagram\.com\/(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/);
+      const shortcode = m ? m[1] : null;
+      out.shortcode = shortcode;
+
+      // 2) shortcode → media pk 디코드 (IG base64 alphabet)
+      if (shortcode) {
+        try {
+          const AB = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+          let id = 0n;
+          for (const ch of shortcode) {
+            const v = AB.indexOf(ch);
+            if (v < 0) { id = null; break; }
+            id = id * 64n + BigInt(v);
+          }
+          out.decoded_media_pk = id != null ? id.toString() : null;
+        } catch (e) { out.decoded_error = e.message; }
+      }
+
+      // 3) instagram_oembed 시도 (oEmbed Read 기능 필요할 수 있음)
+      try {
+        const r = await fetch(`${META_BASE}/instagram_oembed?url=${encodeURIComponent(reels_url)}&access_token=${META_TOKEN}`);
+        out.steps.oembed = await r.json();
+      } catch (e) { out.steps.oembed = { fetch_error: e.message }; }
+
+      // 4) PAGE에 연결된 IG 비즈니스 계정 조회
+      try {
+        const r = await fetch(`${META_BASE}/${PAGE_ID}?fields=instagram_business_account,connected_instagram_account&access_token=${META_TOKEN}`);
+        out.steps.page_ig = await r.json();
+      } catch (e) { out.steps.page_ig = { fetch_error: e.message }; }
+
+      // 5) 디코드한 pk를 media 노드로 직접 조회
+      if (out.decoded_media_pk) {
+        try {
+          const r = await fetch(`${META_BASE}/${out.decoded_media_pk}?fields=id,media_type,owner,username,permalink,shortcode&access_token=${META_TOKEN}`);
+          out.steps.media_node = await r.json();
+        } catch (e) { out.steps.media_node = { fetch_error: e.message }; }
+      }
+
+      return res.status(200).json(out);
+    }
+
     // ── 기존: 광고 목록 조회 ──────────────────────────────────────
     if (action === "get_ads") {
       const now   = new Date();
