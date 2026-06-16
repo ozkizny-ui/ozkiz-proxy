@@ -61,6 +61,39 @@ export default async function handler(req, res) {
         } catch (e) { out.steps.media_node = { fetch_error: e.message }; }
       }
 
+      // 6) 광고계정에 연결된 (광고주) IG 계정 조회 → instagram_user_id 후보
+      try {
+        const r = await fetch(`${META_BASE}/${AD_ACCOUNT}/instagram_accounts?fields=id,username&access_token=${META_TOKEN}`);
+        out.steps.act_ig_accounts = await r.json();
+      } catch (e) { out.steps.act_ig_accounts = { fetch_error: e.message }; }
+      // 페이지 통한 IG 계정(page_backed) 후보도
+      try {
+        const r = await fetch(`${META_BASE}/${AD_ACCOUNT}?fields=name,currency&access_token=${META_TOKEN}`);
+        out.steps.act_info = await r.json();
+      } catch (e) { out.steps.act_info = { fetch_error: e.message }; }
+
+      // 7) (create=1일 때만) source_instagram_media_id로 adcreative 생성 시도 — 여러 페이로드 형태
+      if ((req.query.create === "1") && out.decoded_media_pk) {
+        const igUser = req.query.ig_user_id ||
+          (out.steps.act_ig_accounts?.data?.[0]?.id) || null;
+        out.ig_user_id_used = igUser;
+        const pk = out.decoded_media_pk;
+        const attempts = {
+          A_source_only:        { name: "PA_spike_A", source_instagram_media_id: pk },
+          B_source_iguser:      { name: "PA_spike_B", source_instagram_media_id: pk, instagram_user_id: igUser },
+          C_oss_iguser_source:  { name: "PA_spike_C", object_story_spec: { page_id: PAGE_ID, instagram_user_id: igUser }, source_instagram_media_id: pk },
+        };
+        out.creative_attempts = {};
+        for (const [k, payload] of Object.entries(attempts)) {
+          try {
+            const r = await fetch(`${META_BASE}/${AD_ACCOUNT}/adcreatives?access_token=${META_TOKEN}`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+            });
+            out.creative_attempts[k] = await r.json();
+          } catch (e) { out.creative_attempts[k] = { fetch_error: e.message }; }
+        }
+      }
+
       return res.status(200).json(out);
     }
 
