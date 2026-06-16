@@ -136,6 +136,7 @@ export default async function handler(req, res) {
         B_toplink:           { name: "SPIKE_cc_B", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, multi_share_end_card: false, multi_share_optimized: false, child_attachments: ca } } },
         C_toplink_noopt:     { name: "SPIKE_cc_C", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, multi_share_end_card: false, child_attachments: ca } } },
         D_toplink_plain:     { name: "SPIKE_cc_D", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, child_attachments: ca } } },
+        E_single_image:      { name: "SPIKE_cc_E", object_story_spec: { page_id: PAGE_ID, link_data: { image_hash: cards[0]?.image_hash, link: firstLink, message: caption, call_to_action: { type: "SHOP_NOW", value: { link: firstLink } } } } },
       };
       const out = {};
       for (const [k, payload] of Object.entries(variants)) {
