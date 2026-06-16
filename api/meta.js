@@ -121,6 +121,32 @@ export default async function handler(req, res) {
       return res.status(200).json(out);
     }
 
+    // ── [임시 진단 · 검증 후 제거] 캐러셀 크리에이티브 페이로드 변형 테스트 (adset/ad 안 만듦) ──
+    if (action === "carousel_creative_test") {
+      const { cards = [], caption = "" } = req.body || {};
+      const UTM = `utm_source=facebook&utm_medium=display&utm_campaign=ozkizmall&utm_content={{ad.name}}`;
+      const addUtm = (u) => u ? `${u}${u.includes("?") ? "&" : "?"}${UTM}` : u;
+      const ca = cards.map((c) => {
+        const cl = addUtm(c.link);
+        return { image_hash: c.image_hash, link: cl, name: c.name, call_to_action: { type: "SHOP_NOW", value: { link: cl } } };
+      });
+      const firstLink = ca[0]?.link;
+      const variants = {
+        A_no_toplink:        { name: "SPIKE_cc_A", object_story_spec: { page_id: PAGE_ID, link_data: { message: caption, multi_share_end_card: false, multi_share_optimized: false, child_attachments: ca } } },
+        B_toplink:           { name: "SPIKE_cc_B", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, multi_share_end_card: false, multi_share_optimized: false, child_attachments: ca } } },
+        C_toplink_noopt:     { name: "SPIKE_cc_C", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, multi_share_end_card: false, child_attachments: ca } } },
+        D_toplink_plain:     { name: "SPIKE_cc_D", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, child_attachments: ca } } },
+      };
+      const out = {};
+      for (const [k, payload] of Object.entries(variants)) {
+        const r = await fetch(`${META_BASE}/${AD_ACCOUNT}/adcreatives?access_token=${META_TOKEN}`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        });
+        out[k] = await r.json();
+      }
+      return res.status(200).json({ tried_cards: ca.length, results: out });
+    }
+
     // ── 기존: 광고 목록 조회 ──────────────────────────────────────
     if (action === "get_ads") {
       const now   = new Date();
