@@ -291,7 +291,7 @@ export default async function handler(req, res) {
         campaign_id,
         status: "PAUSED",
         billing_event: "IMPRESSIONS",
-        optimization_goal: "VALUE",
+        optimization_goal: "OFFSITE_CONVERSIONS",
         bid_strategy: "LOWEST_COST_WITHOUT_CAP",
         daily_budget: 10000,
         destination_type: "WEBSITE",
