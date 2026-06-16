@@ -378,6 +378,8 @@ export default async function handler(req, res) {
         collection_label,
         // PA
         post_url,
+        // 캐러셀: [{ image_hash, link, name }] (카드 순서 = 배열 순서)
+        cards,
       } = body;
 
       if (!campaign_id || !ad_name) {
@@ -426,9 +428,30 @@ export default async function handler(req, res) {
 
       // 2) 크리에이티브 생성
       let creativeBody = { name: ad_name };
-      const urlWithUtm = `${landing_url}${landing_url.includes("?") ? "&" : "?"}${UTM}`;
+      // 랜딩 URL에 UTM 부착 (캐러셀은 ad-level landing_url이 없으므로 안전 가드)
+      const addUtm = (u) => u ? `${u}${u.includes("?") ? "&" : "?"}${UTM}` : u;
+      const urlWithUtm = addUtm(landing_url || "");
 
-      if (ad_type === "IMAGE" && image_hash) {
+      if (ad_type === "CAROUSEL" && Array.isArray(cards) && cards.length >= 2) {
+        // 캐러셀: child_attachments에 입력 카드만. 마지막 자동 카드(end card) 끄기, 카드 순서 고정.
+        creativeBody.object_story_spec = {
+          page_id: PAGE_ID,
+          link_data: {
+            message: caption || "",
+            multi_share_end_card: false,   // end card 자동 추가 끔
+            multi_share_optimized: false,  // 카드 순서 = 입력 순서 (자동 재정렬 끔)
+            child_attachments: cards.map((c) => {
+              const cl = addUtm(c.link);
+              return {
+                image_hash: c.image_hash,
+                link: cl,
+                name: c.name,
+                call_to_action: { type: "SHOP_NOW", value: { link: cl } },
+              };
+            }),
+          },
+        };
+      } else if (ad_type === "IMAGE" && image_hash) {
         creativeBody.object_story_spec = {
           page_id: PAGE_ID,
           link_data: {
