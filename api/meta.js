@@ -72,6 +72,30 @@ export default async function handler(req, res) {
         out.steps.act_info = await r.json();
       } catch (e) { out.steps.act_info = { fetch_error: e.message }; }
 
+      // 6.5) IG 읽기/파트너십 능력 진단
+      const brandIg = req.query.ig_user_id || (out.steps.act_ig_accounts?.data?.[0]?.id) || null;
+      out.brand_ig = brandIg;
+      if (brandIg) {
+        // 토큰이 브랜드 자체 미디어를 읽을 수 있는지 (IG read 능력 sanity)
+        try {
+          const r = await fetch(`${META_BASE}/${brandIg}/media?fields=id,shortcode,permalink&limit=2&access_token=${META_TOKEN}`);
+          out.steps.brand_media = await r.json();
+        } catch (e) { out.steps.brand_media = { fetch_error: e.message }; }
+        // 브랜디드 콘텐츠 광고 권한 목록
+        try {
+          const r = await fetch(`${META_BASE}/${brandIg}/branded_content_ad_permissions?access_token=${META_TOKEN}`);
+          out.steps.bc_ad_permissions = await r.json();
+        } catch (e) { out.steps.bc_ad_permissions = { fetch_error: e.message }; }
+      }
+      // V2 형식 추정 {pk}_{brandIg} 노드 조회
+      if (out.decoded_media_pk && brandIg) {
+        try {
+          const guess = `${out.decoded_media_pk}_${brandIg}`;
+          const r = await fetch(`${META_BASE}/${guess}?fields=id,media_type,permalink&access_token=${META_TOKEN}`);
+          out.steps.v2_guess = { id_tried: guess, resp: await r.json() };
+        } catch (e) { out.steps.v2_guess = { fetch_error: e.message }; }
+      }
+
       // 7) (create=1일 때만) source_instagram_media_id로 adcreative 생성 시도 — 여러 페이로드 형태
       if ((req.query.create === "1") && out.decoded_media_pk) {
         const igUser = req.query.ig_user_id ||
