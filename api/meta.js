@@ -121,6 +121,22 @@ export default async function handler(req, res) {
       return res.status(200).json(out);
     }
 
+    // ── [임시 · 검증 후 제거] 스파이크 고아 객체 정리 (이름에 SPIKE 포함 adset 삭제) ──
+    if (action === "spike_cleanup") {
+      const lr = await fetch(`${META_BASE}/${AD_ACCOUNT}/adsets?fields=id,name,created_time&limit=200&access_token=${META_TOKEN}`);
+      const ld = await lr.json();
+      if (ld.error) return res.status(400).json({ error: ld.error.message });
+      const targets = (ld.data || []).filter((a) => (a.name || "").includes("SPIKE"));
+      const deleted = [];
+      if (req.query.delete === "1") {
+        for (const t of targets) {
+          const dr = await fetch(`${META_BASE}/${t.id}?access_token=${META_TOKEN}`, { method: "DELETE" });
+          deleted.push({ id: t.id, name: t.name, resp: await dr.json() });
+        }
+      }
+      return res.status(200).json({ found: targets, deleted });
+    }
+
     // ── [임시 진단 · 검증 후 제거] 캐러셀 크리에이티브 페이로드 변형 테스트 (adset/ad 안 만듦) ──
     if (action === "carousel_creative_test") {
       const { cards = [], caption = "" } = req.body || {};
