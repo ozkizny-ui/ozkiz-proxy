@@ -271,6 +271,16 @@ export default async function handler(req, res) {
       return res.status(200).json(d);
     }
 
+    // ── 광고세트 삭제 (하위 광고 cascade 삭제 — 테스트 정리용) ──
+    if (action === "delete_adset") {
+      const id = req.query.id;
+      if (!id) return res.status(400).json({ error: "id required" });
+      const r = await fetch(`${META_BASE}/${id}?access_token=${META_TOKEN}`, { method: "DELETE" });
+      const d = await r.json();
+      if (d.error) return res.status(400).json({ error: fbErr(d.error) });
+      return res.status(200).json({ deleted: id, resp: d });
+    }
+
     // ── Meta adlocale 검색 (locale 코드 확인용) ──
     if (action === "locale_search") {
       const q = req.query.q || "Korean";
