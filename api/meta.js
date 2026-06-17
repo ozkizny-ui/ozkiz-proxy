@@ -187,6 +187,27 @@ export default async function handler(req, res) {
       return res.status(200).json(out);
     }
 
+    // ── 비즈니스 인증 상태 진단 (B안 전 점검) ──
+    if (action === "biz_verify") {
+      const out = {};
+      // 광고계정이 속한 비즈니스
+      try {
+        const r = await fetch(`${META_BASE}/${AD_ACCOUNT}?fields=name,account_status,business{id,name,verification_status,created_time}&access_token=${META_TOKEN}`);
+        out.ad_account = await r.json();
+        if (out.ad_account.error) out.ad_account = { error: fbErr(out.ad_account.error) };
+      } catch (e) { out.ad_account = { error: e.message }; }
+      // 비즈니스 직접 조회 (verification_status 등)
+      const bizId = out.ad_account && out.ad_account.business && out.ad_account.business.id;
+      if (bizId) {
+        try {
+          const r = await fetch(`${META_BASE}/${bizId}?fields=id,name,verification_status,created_time&access_token=${META_TOKEN}`);
+          const d = await r.json();
+          out.business = d.error ? { error: fbErr(d.error) } : d;
+        } catch (e) { out.business = { error: e.message }; }
+      }
+      return res.status(200).json(out);
+    }
+
     // ── 고아 광고세트 정리 (광고 0개 = 단건 폼이 크리에이티브 단계에서 실패해 남은 빈 세트) ──
     //   dry-run 기본(found만 반환). 삭제는 ?delete=1. 선택 필터: ?name=부분문자열, ?all=1(PAUSED 외 포함)
     if (action === "orphan_cleanup") {
