@@ -9,6 +9,7 @@ export default async function handler(req, res) {
   const CATALOG_ID = process.env.META_CATALOG_ID;
   const PIXEL_ID   = process.env.META_PIXEL_ID;
   const PAGE_ID    = process.env.META_PAGE_ID;
+  const APP_ID     = process.env.META_APP_EVENT_ID || "120624955209649"; // 오즈키즈 앱 이벤트 추적용
   const META_BASE  = "https://graph.facebook.com/v21.0";
 
   if (!META_TOKEN) return res.status(500).json({ error: "META_ACCESS_TOKEN not configured" });
@@ -608,7 +609,8 @@ export default async function handler(req, res) {
 
       const UTM = `utm_source=facebook&utm_medium=display&utm_campaign=ozkizmall&utm_content={{ad.name}}`;
       const trackingSpec = [
-        { "action.type": ["offsite_conversion"], "fb_pixel": [PIXEL_ID] }
+        { "action.type": ["offsite_conversion"], "fb_pixel": [PIXEL_ID] },        // 웹사이트(픽셀) 이벤트
+        { "action.type": ["app_custom_event"], "application": [APP_ID] },          // 앱 이벤트
       ];
 
       // 1) 광고 세트 생성
@@ -630,7 +632,7 @@ export default async function handler(req, res) {
         ],
         targeting: {
           geo_locations: { countries: ["KR"] },
-          locales: [23], // 한국어
+          locales: [12], // 한국어 (ko) — Meta adlocale 코드 12. (이전 23은 스페인어였음)
         },
       };
 
