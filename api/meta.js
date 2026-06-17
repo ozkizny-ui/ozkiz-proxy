@@ -250,11 +250,30 @@ export default async function handler(req, res) {
       return res.status(200).json(out);
     }
 
-    // ── 광고세트 설정 조회 (생성 검증용: optimization_goal 등) ──
+    // ── 광고세트 설정 조회 (생성 검증용: optimization_goal, targeting.locales 등) ──
     if (action === "get_adset") {
       const id = req.query.id;
       if (!id) return res.status(400).json({ error: "id required" });
-      const r = await fetch(`${META_BASE}/${id}?fields=id,name,status,campaign_id,optimization_goal,billing_event,bid_strategy,daily_budget,destination_type,promoted_object,attribution_spec&access_token=${META_TOKEN}`);
+      const r = await fetch(`${META_BASE}/${id}?fields=id,name,status,campaign_id,optimization_goal,billing_event,bid_strategy,daily_budget,destination_type,promoted_object,attribution_spec,targeting&access_token=${META_TOKEN}`);
+      const d = await r.json();
+      if (d.error) return res.status(400).json({ error: fbErr(d.error) });
+      return res.status(200).json(d);
+    }
+
+    // ── 광고 조회 (tracking_specs 검증용) ──
+    if (action === "get_ad") {
+      const id = req.query.id;
+      if (!id) return res.status(400).json({ error: "id required" });
+      const r = await fetch(`${META_BASE}/${id}?fields=id,name,status,tracking_specs,creative&access_token=${META_TOKEN}`);
+      const d = await r.json();
+      if (d.error) return res.status(400).json({ error: fbErr(d.error) });
+      return res.status(200).json(d);
+    }
+
+    // ── Meta adlocale 검색 (locale 코드 확인용) ──
+    if (action === "locale_search") {
+      const q = req.query.q || "Korean";
+      const r = await fetch(`${META_BASE}/search?type=adlocale&q=${encodeURIComponent(q)}&limit=50&access_token=${META_TOKEN}`);
       const d = await r.json();
       if (d.error) return res.status(400).json({ error: fbErr(d.error) });
       return res.status(200).json(d);
