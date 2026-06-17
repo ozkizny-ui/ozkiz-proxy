@@ -271,6 +271,16 @@ export default async function handler(req, res) {
       return res.status(200).json(d);
     }
 
+    // ── [임시 · 검증 후 제거] 이름으로 광고세트 검색 (delete_adset 대상 id 확보용) ──
+    if (action === "find_adset") {
+      const q = req.query.q || "";
+      const lr = await fetch(`${META_BASE}/${AD_ACCOUNT}/adsets?fields=id,name,status,created_time,ads.limit(5){id,name,status}&limit=500&access_token=${META_TOKEN}`);
+      const ld = await lr.json();
+      if (ld.error) return res.status(400).json({ error: fbErr(ld.error) });
+      const found = (ld.data || []).filter((a) => !q || (a.name || "").includes(q));
+      return res.status(200).json({ count: found.length, found });
+    }
+
     // ── 광고세트 삭제 (하위 광고 cascade 삭제 — 테스트 정리용) ──
     if (action === "delete_adset") {
       const id = req.query.id;
