@@ -153,6 +153,35 @@ export default async function handler(req, res) {
       return res.status(200).json({ found: targets, deleted });
     }
 
+    // ── 앱 정보 진단 (Live 전환 전 점검: app id, 카테고리, 개인정보처리방침 URL 등) ──
+    if (action === "app_info") {
+      const out = {};
+      // 1) 토큰이 속한 앱
+      try {
+        const r = await fetch(`${META_BASE}/app?fields=id,name,namespace,category,link,app_type&access_token=${META_TOKEN}`);
+        out.app = await r.json();
+      } catch (e) { out.app = { error: e.message }; }
+      const appId = out.app && out.app.id;
+      // 2) 앱 상세 설정 (privacy_policy_url 등은 app access_token 필요할 수 있음 → 안 나오면 콘솔 확인)
+      if (appId) {
+        try {
+          const r = await fetch(`${META_BASE}/${appId}?fields=id,name,category,subcategory,link,privacy_policy_url,terms_of_service_url,app_domains,contact_email,user_support_email,app_type&access_token=${META_TOKEN}`);
+          out.app_detail = await r.json();
+        } catch (e) { out.app_detail = { error: e.message }; }
+      }
+      // 3) 토큰 디버그 (만료/스코프/타입)
+      try {
+        const r = await fetch(`${META_BASE}/debug_token?input_token=${META_TOKEN}&access_token=${META_TOKEN}`);
+        const d = await r.json();
+        out.token = d.data ? {
+          app_id: d.data.app_id, type: d.data.type, application: d.data.application,
+          is_valid: d.data.is_valid, expires_at: d.data.expires_at, data_access_expires_at: d.data.data_access_expires_at,
+          scopes: d.data.scopes,
+        } : d;
+      } catch (e) { out.token = { error: e.message }; }
+      return res.status(200).json(out);
+    }
+
     // ── 고아 광고세트 정리 (광고 0개 = 단건 폼이 크리에이티브 단계에서 실패해 남은 빈 세트) ──
     //   dry-run 기본(found만 반환). 삭제는 ?delete=1. 선택 필터: ?name=부분문자열, ?all=1(PAUSED 외 포함)
     if (action === "orphan_cleanup") {
