@@ -13,6 +13,22 @@ export default async function handler(req, res) {
 
   if (!META_TOKEN) return res.status(500).json({ error: "META_ACCESS_TOKEN not configured" });
 
+  // Meta 그래프 에러를 진단 가능한 한 줄로 펼침 (message만으론 "Invalid parameter"라 원인 불명)
+  const fbErr = (err) => {
+    if (!err) return "unknown error";
+    const parts = [err.message || "error"];
+    if (err.error_user_title) parts.push(`[${err.error_user_title}]`);
+    if (err.error_user_msg)   parts.push(err.error_user_msg);
+    const blame = err.error_data && err.error_data.blame_field_specs;
+    if (blame) parts.push(`field=${JSON.stringify(blame)}`);
+    const tail = [];
+    if (err.code != null)         tail.push(`code ${err.code}`);
+    if (err.error_subcode != null) tail.push(`subcode ${err.error_subcode}`);
+    if (err.fbtrace_id)           tail.push(`fbtrace ${err.fbtrace_id}`);
+    if (tail.length) parts.push(`(${tail.join(", ")})`);
+    return parts.join(" ");
+  };
+
   const { action } = req.query;
 
   try {
@@ -375,7 +391,7 @@ export default async function handler(req, res) {
         }
       );
       const data = await r.json();
-      if (data.error) return res.status(400).json({ error: data.error.message });
+      if (data.error) return res.status(400).json({ error: `이미지 업로드 실패: ${fbErr(data.error)}` });
       // 해시 반환
       const images = data.images || {};
       const hash = Object.values(images)[0]?.hash;
@@ -399,7 +415,7 @@ export default async function handler(req, res) {
         }
       );
       const data = await r.json();
-      if (data.error) return res.status(400).json({ error: data.error.message });
+      if (data.error) return res.status(400).json({ error: `영상 업로드 실패: ${fbErr(data.error)}` });
       return res.status(200).json({ video_id: data.id });
     }
 
@@ -466,7 +482,7 @@ export default async function handler(req, res) {
         }
       );
       const adSetData = await adSetRes.json();
-      if (adSetData.error) return res.status(400).json({ error: `광고세트 생성 실패: ${adSetData.error.message}` });
+      if (adSetData.error) return res.status(400).json({ error: `광고세트 생성 실패: ${fbErr(adSetData.error)}` });
       const adset_id = adSetData.id;
 
       // 2) 크리에이티브 생성
@@ -555,7 +571,7 @@ export default async function handler(req, res) {
         }
       );
       const creativeData = await creativeRes.json();
-      if (creativeData.error) return res.status(400).json({ error: `크리에이티브 생성 실패: ${creativeData.error.message}` });
+      if (creativeData.error) return res.status(400).json({ error: `크리에이티브 생성 실패: ${fbErr(creativeData.error)}`, debug_creative_body: creativeBody });
       const creative_id = creativeData.id;
 
       // 3) 광고 생성
@@ -574,7 +590,7 @@ export default async function handler(req, res) {
         }
       );
       const adData = await adRes.json();
-      if (adData.error) return res.status(400).json({ error: `광고 생성 실패: ${adData.error.message}` });
+      if (adData.error) return res.status(400).json({ error: `광고 생성 실패: ${fbErr(adData.error)}` });
 
       return res.status(200).json({
         success: true,
