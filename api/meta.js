@@ -153,6 +153,31 @@ export default async function handler(req, res) {
       return res.status(200).json({ found: targets, deleted });
     }
 
+    // ── 고아 광고세트 정리 (광고 0개 = 단건 폼이 크리에이티브 단계에서 실패해 남은 빈 세트) ──
+    //   dry-run 기본(found만 반환). 삭제는 ?delete=1. 선택 필터: ?name=부분문자열, ?all=1(PAUSED 외 포함)
+    if (action === "orphan_cleanup") {
+      const onlyPaused   = req.query.all !== "1";
+      const nameContains = req.query.name || "";
+      const lr = await fetch(`${META_BASE}/${AD_ACCOUNT}/adsets?fields=id,name,status,created_time,ads.limit(1){id}&limit=500&access_token=${META_TOKEN}`);
+      const ld = await lr.json();
+      if (ld.error) return res.status(400).json({ error: fbErr(ld.error) });
+      const targets = (ld.data || []).filter((a) => {
+        const adCount = (a.ads && a.ads.data) ? a.ads.data.length : 0;
+        if (adCount > 0) return false;                                  // 광고가 있으면 제외
+        if (onlyPaused && a.status !== "PAUSED") return false;          // 기본은 PAUSED만
+        if (nameContains && !(a.name || "").includes(nameContains)) return false;
+        return true;
+      });
+      const deleted = [];
+      if (req.query.delete === "1") {
+        for (const t of targets) {
+          const dr = await fetch(`${META_BASE}/${t.id}?access_token=${META_TOKEN}`, { method: "DELETE" });
+          deleted.push({ id: t.id, name: t.name, resp: await dr.json() });
+        }
+      }
+      return res.status(200).json({ count: targets.length, found: targets, deleted });
+    }
+
     // ── [임시 진단 · 검증 후 제거] 캐러셀 크리에이티브 페이로드 변형 테스트 (adset/ad 안 만듦) ──
     if (action === "carousel_creative_test") {
       const { cards = [], caption = "" } = req.body || {};
