@@ -212,6 +212,20 @@ export default async function handler(req, res) {
           out.system_users = d.error ? { error: fbErr(d.error) } : d.data;
         }
       } catch (e) { out.system_users = { error: e.message }; }
+      // 자산 4종 접근 확인 (현재 토큰으로 읽히는지 = 할당/사용 가능 여부)
+      out.assets = {};
+      const probe = async (label, node) => {
+        if (!node) { out.assets[label] = "(env 미설정)"; return; }
+        try {
+          const r = await fetch(`${META_BASE}/${node}?fields=id,name&access_token=${META_TOKEN}`);
+          const d = await r.json();
+          out.assets[label] = d.error ? `ERR: ${fbErr(d.error)}` : d;
+        } catch (e) { out.assets[label] = `ERR: ${e.message}`; }
+      };
+      await probe("ad_account", AD_ACCOUNT);
+      await probe("page", PAGE_ID);
+      await probe("pixel", PIXEL_ID);
+      await probe("catalog", CATALOG_ID);
       return res.status(200).json(out);
     }
 
