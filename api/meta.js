@@ -187,6 +187,34 @@ export default async function handler(req, res) {
       return res.status(200).json(out);
     }
 
+    // ── 현재 토큰의 시스템 사용자 식별 + 비즈니스 시스템 사용자 목록 ──
+    if (action === "whoami") {
+      const out = {};
+      // /me = 토큰 주체(시스템 사용자) id/name
+      try {
+        const r = await fetch(`${META_BASE}/me?fields=id,name&access_token=${META_TOKEN}`);
+        out.me = await r.json();
+      } catch (e) { out.me = { error: e.message }; }
+      // debug_token의 user_id (시스템 사용자 id)
+      try {
+        const r = await fetch(`${META_BASE}/debug_token?input_token=${META_TOKEN}&access_token=${META_TOKEN}`);
+        const d = await r.json();
+        out.token_user_id = d.data && d.data.user_id;
+      } catch (e) { out.token_user_id = `ERR: ${e.message}` ; }
+      // 비즈니스의 시스템 사용자 전체 + 각자 할당된 광고계정/권한
+      try {
+        const br = await fetch(`${META_BASE}/${AD_ACCOUNT}?fields=business&access_token=${META_TOKEN}`);
+        const bd = await br.json();
+        const bizId = bd.business && bd.business.id;
+        if (bizId) {
+          const r = await fetch(`${META_BASE}/${bizId}/system_users?fields=id,name,role,assigned_ad_accounts{id,name,tasks}&access_token=${META_TOKEN}`);
+          const d = await r.json();
+          out.system_users = d.error ? { error: fbErr(d.error) } : d.data;
+        }
+      } catch (e) { out.system_users = { error: e.message }; }
+      return res.status(200).json(out);
+    }
+
     // ── 비즈니스 인증 상태 진단 (B안 전 점검) ──
     if (action === "biz_verify") {
       const out = {};
