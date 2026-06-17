@@ -162,21 +162,26 @@ export default async function handler(req, res) {
         out.app = await r.json();
       } catch (e) { out.app = { error: e.message }; }
       const appId = out.app && out.app.id;
-      // 2) 앱 상세 설정 (privacy_policy_url 등은 app access_token 필요할 수 있음 → 안 나오면 콘솔 확인)
+      // 2) 앱 상세 설정 — 필드별로 따로 조회(토큰 권한 부족 필드는 그 필드만 누락/에러로 표시)
       if (appId) {
-        try {
-          const r = await fetch(`${META_BASE}/${appId}?fields=id,name,category,subcategory,link,privacy_policy_url,terms_of_service_url,app_domains,contact_email,user_support_email,app_type&access_token=${META_TOKEN}`);
-          out.app_detail = await r.json();
-        } catch (e) { out.app_detail = { error: e.message }; }
+        const fieldsTry = ["app_type", "category", "subcategory", "privacy_policy_url", "terms_of_service_url", "app_domains", "contact_email", "user_support_email", "object_store_urls"];
+        out.app_detail = {};
+        for (const f of fieldsTry) {
+          try {
+            const r = await fetch(`${META_BASE}/${appId}?fields=${f}&access_token=${META_TOKEN}`);
+            const d = await r.json();
+            out.app_detail[f] = d.error ? `ERR: ${fbErr(d.error)}` : (f in d ? d[f] : "(not returned)");
+          } catch (e) { out.app_detail[f] = `ERR: ${e.message}`; }
+        }
       }
-      // 3) 토큰 디버그 (만료/스코프/타입)
+      // 3) 토큰 디버그 (만료/스코프/타입 + granular_scopes = 권한이 실제 부여된 자산)
       try {
         const r = await fetch(`${META_BASE}/debug_token?input_token=${META_TOKEN}&access_token=${META_TOKEN}`);
         const d = await r.json();
         out.token = d.data ? {
           app_id: d.data.app_id, type: d.data.type, application: d.data.application,
           is_valid: d.data.is_valid, expires_at: d.data.expires_at, data_access_expires_at: d.data.data_access_expires_at,
-          scopes: d.data.scopes,
+          scopes: d.data.scopes, granular_scopes: d.data.granular_scopes,
         } : d;
       } catch (e) { out.token = { error: e.message }; }
       return res.status(200).json(out);
