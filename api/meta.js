@@ -260,6 +260,16 @@ export default async function handler(req, res) {
       return res.status(200).json(d);
     }
 
+    // ── 크리에이티브 조회 (캐러셀 child_attachments 검증용) ──
+    if (action === "get_creative") {
+      const id = req.query.id;
+      if (!id) return res.status(400).json({ error: "id required" });
+      const r = await fetch(`${META_BASE}/${id}?fields=id,name,object_story_spec&access_token=${META_TOKEN}`);
+      const d = await r.json();
+      if (d.error) return res.status(400).json({ error: fbErr(d.error) });
+      return res.status(200).json(d);
+    }
+
     // ── 고아 광고세트 정리 (광고 0개 = 단건 폼이 크리에이티브 단계에서 실패해 남은 빈 세트) ──
     //   dry-run 기본(found만 반환). 삭제는 ?delete=1. 선택 필터: ?name=부분문자열, ?all=1(PAUSED 외 포함)
     if (action === "orphan_cleanup") {
