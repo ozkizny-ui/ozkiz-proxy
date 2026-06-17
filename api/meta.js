@@ -579,7 +579,7 @@ export default async function handler(req, res) {
 
       const UTM = `utm_source=facebook&utm_medium=display&utm_campaign=ozkizmall&utm_content={{ad.name}}`;
       const trackingSpec = [
-        { action_type: ["offsite_conversion"], fb_pixel: [PIXEL_ID] }
+        { "action.type": ["offsite_conversion"], "fb_pixel": [PIXEL_ID] }
       ];
 
       // 1) 광고 세트 생성
