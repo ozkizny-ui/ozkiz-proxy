@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const META_TOKEN = process.env.META_ACCESS_TOKEN;
+  const META_TOKEN = process.env.META_ACCESS_TOKEN_AD_AUTO || process.env.META_ACCESS_TOKEN;
   const AD_ACCOUNT = process.env.META_AD_ACCOUNT_ID;
   const CATALOG_ID = process.env.META_CATALOG_ID;
   const PIXEL_ID   = process.env.META_PIXEL_ID;

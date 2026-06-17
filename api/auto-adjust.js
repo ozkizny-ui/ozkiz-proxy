@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const META_TOKEN = process.env.META_ACCESS_TOKEN;
+  const META_TOKEN = process.env.META_ACCESS_TOKEN_AD_AUTO || process.env.META_ACCESS_TOKEN;
   const AD_ACCOUNT = process.env.META_AD_ACCOUNT_ID;
   const META_BASE  = 'https://graph.facebook.com/v21.0';
 
