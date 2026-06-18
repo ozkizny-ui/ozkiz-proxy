@@ -20,6 +20,25 @@ export default async function handler(req, res) {
 
   try {
 
+    // ── [임시 스파이크 · 검증 후 제거] advideos file_url 검증 (Drive URL → Meta 직접 ingest) ──
+    //   ?id=FILE_ID. Drive API 미디어 URL을 file_url로 넘겨 Meta가 직접 받아가는지 확인.
+    if (action === "vurl_test") {
+      const KEY = process.env.GOOGLE_DRIVE_API_KEY;
+      if (!KEY) return res.status(500).json({ error: "GOOGLE_DRIVE_API_KEY not configured" });
+      const id = req.query.id;
+      if (!id) return res.status(400).json({ error: "id required" });
+      const fileUrl = `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${KEY}`;
+      const t0 = Date.now();
+      const r = await fetch(`${META_BASE}/${AD_ACCOUNT}/advideos?access_token=${META_TOKEN}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_url: fileUrl, name: req.query.name || "vurl_test.mp4" }),
+      });
+      const d = await r.json();
+      const elapsed_ms = Date.now() - t0;
+      if (d.error) return res.status(400).json({ error: `advideos file_url 실패: ${fbErr(d.error)}`, elapsed_ms });
+      return res.status(200).json({ video_id: d.id, elapsed_ms });
+    }
+
     // ── [임시 스파이크 · 검증 후 제거] Drive 폴더 파일명 검색 → 다운로드 검증 ──
     //   공개 폴더("링크 있는 모든 사용자 뷰어") + Drive API 키 방식. 서비스 계정 미사용.
     //   1) 폴더 리스트 → 이미지/영상 자동 선택  2) 파일명으로 재검색(=production 경로)
