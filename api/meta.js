@@ -138,119 +138,6 @@ export default async function handler(req, res) {
       return res.status(200).json(out);
     }
 
-    // ── [임시 · 검증 후 제거] 스파이크 고아 객체 정리 (이름에 SPIKE 포함 adset 삭제) ──
-    if (action === "spike_cleanup") {
-      const lr = await fetch(`${META_BASE}/${AD_ACCOUNT}/adsets?fields=id,name,created_time&limit=200&access_token=${META_TOKEN}`);
-      const ld = await lr.json();
-      if (ld.error) return res.status(400).json({ error: ld.error.message });
-      const targets = (ld.data || []).filter((a) => (a.name || "").includes("SPIKE"));
-      const deleted = [];
-      if (req.query.delete === "1") {
-        for (const t of targets) {
-          const dr = await fetch(`${META_BASE}/${t.id}?access_token=${META_TOKEN}`, { method: "DELETE" });
-          deleted.push({ id: t.id, name: t.name, resp: await dr.json() });
-        }
-      }
-      return res.status(200).json({ found: targets, deleted });
-    }
-
-    // ── 앱 정보 진단 (Live 전환 전 점검: app id, 카테고리, 개인정보처리방침 URL 등) ──
-    if (action === "app_info") {
-      const out = {};
-      // 1) 토큰이 속한 앱
-      try {
-        const r = await fetch(`${META_BASE}/app?fields=id,name,namespace,category,link,app_type&access_token=${META_TOKEN}`);
-        out.app = await r.json();
-      } catch (e) { out.app = { error: e.message }; }
-      const appId = out.app && out.app.id;
-      // 2) 앱 상세 설정 — 필드별로 따로 조회(토큰 권한 부족 필드는 그 필드만 누락/에러로 표시)
-      if (appId) {
-        const fieldsTry = ["app_type", "category", "subcategory", "privacy_policy_url", "terms_of_service_url", "app_domains", "contact_email", "user_support_email", "object_store_urls"];
-        out.app_detail = {};
-        for (const f of fieldsTry) {
-          try {
-            const r = await fetch(`${META_BASE}/${appId}?fields=${f}&access_token=${META_TOKEN}`);
-            const d = await r.json();
-            out.app_detail[f] = d.error ? `ERR: ${fbErr(d.error)}` : (f in d ? d[f] : "(not returned)");
-          } catch (e) { out.app_detail[f] = `ERR: ${e.message}`; }
-        }
-      }
-      // 3) 토큰 디버그 (만료/스코프/타입 + granular_scopes = 권한이 실제 부여된 자산)
-      try {
-        const r = await fetch(`${META_BASE}/debug_token?input_token=${META_TOKEN}&access_token=${META_TOKEN}`);
-        const d = await r.json();
-        out.token = d.data ? {
-          app_id: d.data.app_id, type: d.data.type, application: d.data.application,
-          is_valid: d.data.is_valid, expires_at: d.data.expires_at, data_access_expires_at: d.data.data_access_expires_at,
-          scopes: d.data.scopes, granular_scopes: d.data.granular_scopes,
-        } : d;
-      } catch (e) { out.token = { error: e.message }; }
-      return res.status(200).json(out);
-    }
-
-    // ── 현재 토큰의 시스템 사용자 식별 + 비즈니스 시스템 사용자 목록 ──
-    if (action === "whoami") {
-      const out = {};
-      // /me = 토큰 주체(시스템 사용자) id/name
-      try {
-        const r = await fetch(`${META_BASE}/me?fields=id,name&access_token=${META_TOKEN}`);
-        out.me = await r.json();
-      } catch (e) { out.me = { error: e.message }; }
-      // debug_token의 user_id (시스템 사용자 id)
-      try {
-        const r = await fetch(`${META_BASE}/debug_token?input_token=${META_TOKEN}&access_token=${META_TOKEN}`);
-        const d = await r.json();
-        out.token_user_id = d.data && d.data.user_id;
-      } catch (e) { out.token_user_id = `ERR: ${e.message}` ; }
-      // 비즈니스의 시스템 사용자 전체 + 각자 할당된 광고계정/권한
-      try {
-        const br = await fetch(`${META_BASE}/${AD_ACCOUNT}?fields=business&access_token=${META_TOKEN}`);
-        const bd = await br.json();
-        const bizId = bd.business && bd.business.id;
-        if (bizId) {
-          const r = await fetch(`${META_BASE}/${bizId}/system_users?fields=id,name,role,assigned_ad_accounts{id,name,tasks}&access_token=${META_TOKEN}`);
-          const d = await r.json();
-          out.system_users = d.error ? { error: fbErr(d.error) } : d.data;
-        }
-      } catch (e) { out.system_users = { error: e.message }; }
-      // 자산 4종 접근 확인 (현재 토큰으로 읽히는지 = 할당/사용 가능 여부)
-      out.assets = {};
-      const probe = async (label, node) => {
-        if (!node) { out.assets[label] = "(env 미설정)"; return; }
-        try {
-          const r = await fetch(`${META_BASE}/${node}?fields=id,name&access_token=${META_TOKEN}`);
-          const d = await r.json();
-          out.assets[label] = d.error ? `ERR: ${fbErr(d.error)}` : d;
-        } catch (e) { out.assets[label] = `ERR: ${e.message}`; }
-      };
-      await probe("ad_account", AD_ACCOUNT);
-      await probe("page", PAGE_ID);
-      await probe("pixel", PIXEL_ID);
-      await probe("catalog", CATALOG_ID);
-      return res.status(200).json(out);
-    }
-
-    // ── 비즈니스 인증 상태 진단 (B안 전 점검) ──
-    if (action === "biz_verify") {
-      const out = {};
-      // 광고계정이 속한 비즈니스
-      try {
-        const r = await fetch(`${META_BASE}/${AD_ACCOUNT}?fields=name,account_status,business{id,name,verification_status,created_time}&access_token=${META_TOKEN}`);
-        out.ad_account = await r.json();
-        if (out.ad_account.error) out.ad_account = { error: fbErr(out.ad_account.error) };
-      } catch (e) { out.ad_account = { error: e.message }; }
-      // 비즈니스 직접 조회 (verification_status 등)
-      const bizId = out.ad_account && out.ad_account.business && out.ad_account.business.id;
-      if (bizId) {
-        try {
-          const r = await fetch(`${META_BASE}/${bizId}?fields=id,name,verification_status,created_time&access_token=${META_TOKEN}`);
-          const d = await r.json();
-          out.business = d.error ? { error: fbErr(d.error) } : d;
-        } catch (e) { out.business = { error: e.message }; }
-      }
-      return res.status(200).json(out);
-    }
-
     // ── 광고세트 설정 조회 (생성 검증용: optimization_goal, targeting.locales 등) ──
     if (action === "get_adset") {
       const id = req.query.id;
@@ -261,26 +148,6 @@ export default async function handler(req, res) {
       return res.status(200).json(d);
     }
 
-    // ── 광고 조회 (tracking_specs 검증용) ──
-    if (action === "get_ad") {
-      const id = req.query.id;
-      if (!id) return res.status(400).json({ error: "id required" });
-      const r = await fetch(`${META_BASE}/${id}?fields=id,name,status,tracking_specs,creative&access_token=${META_TOKEN}`);
-      const d = await r.json();
-      if (d.error) return res.status(400).json({ error: fbErr(d.error) });
-      return res.status(200).json(d);
-    }
-
-    // ── [임시 · 검증 후 제거] 이름으로 광고세트 검색 (delete_adset 대상 id 확보용) ──
-    if (action === "find_adset") {
-      const q = req.query.q || "";
-      const lr = await fetch(`${META_BASE}/${AD_ACCOUNT}/adsets?fields=id,name,status,created_time,ads.limit(5){id,name,status}&limit=500&access_token=${META_TOKEN}`);
-      const ld = await lr.json();
-      if (ld.error) return res.status(400).json({ error: fbErr(ld.error) });
-      const found = (ld.data || []).filter((a) => !q || (a.name || "").includes(q));
-      return res.status(200).json({ count: found.length, found });
-    }
-
     // ── 광고세트 삭제 (하위 광고 cascade 삭제 — 테스트 정리용) ──
     if (action === "delete_adset") {
       const id = req.query.id;
@@ -289,25 +156,6 @@ export default async function handler(req, res) {
       const d = await r.json();
       if (d.error) return res.status(400).json({ error: fbErr(d.error) });
       return res.status(200).json({ deleted: id, resp: d });
-    }
-
-    // ── Meta adlocale 검색 (locale 코드 확인용) ──
-    if (action === "locale_search") {
-      const q = req.query.q || "Korean";
-      const r = await fetch(`${META_BASE}/search?type=adlocale&q=${encodeURIComponent(q)}&limit=50&access_token=${META_TOKEN}`);
-      const d = await r.json();
-      if (d.error) return res.status(400).json({ error: fbErr(d.error) });
-      return res.status(200).json(d);
-    }
-
-    // ── 크리에이티브 조회 (캐러셀 child_attachments 검증용) ──
-    if (action === "get_creative") {
-      const id = req.query.id;
-      if (!id) return res.status(400).json({ error: "id required" });
-      const r = await fetch(`${META_BASE}/${id}?fields=id,name,object_story_spec&access_token=${META_TOKEN}`);
-      const d = await r.json();
-      if (d.error) return res.status(400).json({ error: fbErr(d.error) });
-      return res.status(200).json(d);
     }
 
     // ── 고아 광고세트 정리 (광고 0개 = 단건 폼이 크리에이티브 단계에서 실패해 남은 빈 세트) ──
@@ -333,33 +181,6 @@ export default async function handler(req, res) {
         }
       }
       return res.status(200).json({ count: targets.length, found: targets, deleted });
-    }
-
-    // ── [임시 진단 · 검증 후 제거] 캐러셀 크리에이티브 페이로드 변형 테스트 (adset/ad 안 만듦) ──
-    if (action === "carousel_creative_test") {
-      const { cards = [], caption = "" } = req.body || {};
-      const UTM = `utm_source=facebook&utm_medium=display&utm_campaign=ozkizmall&utm_content={{ad.name}}`;
-      const addUtm = (u) => u ? `${u}${u.includes("?") ? "&" : "?"}${UTM}` : u;
-      const ca = cards.map((c) => {
-        const cl = addUtm(c.link);
-        return { image_hash: c.image_hash, link: cl, name: c.name, call_to_action: { type: "SHOP_NOW", value: { link: cl } } };
-      });
-      const firstLink = ca[0]?.link;
-      const variants = {
-        A_no_toplink:        { name: "SPIKE_cc_A", object_story_spec: { page_id: PAGE_ID, link_data: { message: caption, multi_share_end_card: false, multi_share_optimized: false, child_attachments: ca } } },
-        B_toplink:           { name: "SPIKE_cc_B", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, multi_share_end_card: false, multi_share_optimized: false, child_attachments: ca } } },
-        C_toplink_noopt:     { name: "SPIKE_cc_C", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, multi_share_end_card: false, child_attachments: ca } } },
-        D_toplink_plain:     { name: "SPIKE_cc_D", object_story_spec: { page_id: PAGE_ID, link_data: { link: firstLink, message: caption, child_attachments: ca } } },
-        E_single_image:      { name: "SPIKE_cc_E", object_story_spec: { page_id: PAGE_ID, link_data: { image_hash: cards[0]?.image_hash, link: firstLink, message: caption, call_to_action: { type: "SHOP_NOW", value: { link: firstLink } } } } },
-      };
-      const out = {};
-      for (const [k, payload] of Object.entries(variants)) {
-        const r = await fetch(`${META_BASE}/${AD_ACCOUNT}/adcreatives?access_token=${META_TOKEN}`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-        });
-        out[k] = await r.json();
-      }
-      return res.status(200).json({ tried_cards: ca.length, results: out });
     }
 
     // ── 기존: 광고 목록 조회 ──────────────────────────────────────
