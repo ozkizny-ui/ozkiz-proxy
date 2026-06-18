@@ -13,7 +13,7 @@
 // Vercel maxDuration=60s. 영상 1건 ~50s, 캐러셀은 카드수만큼 다운로드 → 프론트가 청크로 호출(진행률).
 
 import { createAd, uploadImage, uploadVideoByUrl, getVideoStatus, getVideoThumbnail, fbErr } from "../lib/meta.js";
-import { AD_MEDIA_FOLDER, driveKey, mediaUrl, findByName, downloadBase64 } from "../lib/drive.js";
+import { AD_MEDIA_FOLDER, driveKey, mediaUrl, listFolder, matchByName, downloadBase64 } from "../lib/drive.js";
 import { parseMediaFilename } from "../lib/filename.js";
 import { buildCarousel } from "../lib/carousel.js";
 
@@ -57,6 +57,11 @@ export default async function handler(req, res) {
     const idSet  = new Set(campaigns.map((c) => c.id));
     const resolveCampaign = (c) => (idSet.has(c) ? c : byName.get(c));
 
+    // 폴더 1회 리스트 → 파일명은 관용 매칭(matchByName: NFC·확장자유무·대소문자 무관)
+    const lf = await listFolder(AD_MEDIA_FOLDER, KEY);
+    if (!lf.ok) return res.status(400).json({ error: `Drive 폴더 조회 실패: ${lf.error}` });
+    const folderFiles = lf.files;
+
     const mediaCache = new Map(); // file.id -> { image_hash } | { video_id, thumbnail_url }
     const results = [];
 
@@ -91,10 +96,9 @@ export default async function handler(req, res) {
       const campaign_id = resolveCampaign(campaign);
       if (!campaign_id) return push("error", "campaign", { message: `캠페인 못 찾음: '${campaign}' — 정확한 캠페인명/ID 확인` });
 
-      const found = await findByName(AD_MEDIA_FOLDER, filename, KEY);
-      if (!found.ok)        return push("error", "media", { message: `Drive 검색 실패: ${found.error}` });
+      const found = matchByName(folderFiles, filename);
       if (found.hits === 0) return push("error", "media", { message: `Drive 폴더에 '${filename}' 없음 — 업로드/철자 확인` });
-      if (found.hits > 1)   return push("error", "media", { message: `Drive 폴더에 동명 파일 ${found.hits}개 — 이름 구분 필요` });
+      if (found.hits > 1)   return push("error", "media", { message: `Drive 폴더에 '${filename}' 동명 ${found.hits}개 — 이름 구분 필요` });
       const file = found.file;
       const mime = file.mimeType || "";
       if (type === "image" && !mime.startsWith("image/")) return push("error", "media", { message: `type=image인데 파일이 이미지 아님(${mime})` });
@@ -155,8 +159,7 @@ export default async function handler(req, res) {
       const tMedia = Date.now();
       const childCards = [];
       for (const c of built.cards) {
-        const f = await findByName(AD_MEDIA_FOLDER, c.filename, KEY);
-        if (!f.ok)        return push("error", "media", { ad_name: built.adName, message: `Drive 검색 실패: ${f.error}` });
+        const f = matchByName(folderFiles, c.filename);
         if (f.hits === 0) return push("error", "media", { ad_name: built.adName, message: `카드 '${c.filename}' Drive에 없음 — 업로드/철자 확인` });
         if (f.hits > 1)   return push("error", "media", { ad_name: built.adName, message: `카드 '${c.filename}' 동명 ${f.hits}개 — 이름 구분 필요` });
         if (!(f.file.mimeType || "").startsWith("image/")) return push("error", "media", { ad_name: built.adName, message: `카드 '${c.filename}' 이미지 아님(${f.file.mimeType})` });
