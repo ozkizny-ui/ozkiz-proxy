@@ -103,7 +103,7 @@ export default async function handler(req, res) {
       const { adName } = parseMediaFilename(filename);
       if (dryRun) return push("ok", "validate", { ad_name: adName, file_id: file.id, size: file.size, message: "검증 통과" });
 
-      const t0 = Date.now();
+      const tMedia = Date.now();
       let media = mediaCache.get(file.id);
       if (!media) {
         if (type === "image") {
@@ -128,11 +128,13 @@ export default async function handler(req, res) {
           mediaCache.set(file.id, media);
         }
       }
+      const media_ms = Date.now() - tMedia;
 
+      const tCreate = Date.now();
       const r = await createAd({ ad_type: type.toUpperCase(), campaign_id, ad_name: adName, landing_url, caption, ...media }, ctx);
-      const elapsed_ms = Date.now() - t0;
-      if (!r.ok) return push("error", r.stage, { ad_name: adName, adset_id: r.adset_id, elapsed_ms, message: r.error });
-      push("ok", "ad", { ad_name: adName, adset_id: r.adset_id, creative_id: r.creative_id, ad_id: r.ad_id, elapsed_ms, ad_permalink: adLink(r.ad_id) });
+      const create_ms = Date.now() - tCreate;
+      if (!r.ok) return push("error", r.stage, { ad_name: adName, adset_id: r.adset_id, media_ms, create_ms, message: r.error });
+      push("ok", "ad", { ad_name: adName, adset_id: r.adset_id, creative_id: r.creative_id, ad_id: r.ad_id, media_ms, create_ms, elapsed_ms: media_ms + create_ms, ad_permalink: adLink(r.ad_id) });
     }
 
     // ── carousel 그룹 1개 처리 ──
@@ -149,8 +151,8 @@ export default async function handler(req, res) {
       const campaign_id = resolveCampaign(built.campaign);
       if (!campaign_id) return push("error", "campaign", { ad_name: built.adName, message: `캠페인 못 찾음: '${built.campaign}'` });
 
-      // 3) Drive 존재 확인 (+ dry_run이면 여기까지)
-      const t0 = Date.now();
+      // 3) Drive 존재 확인 + 카드 다운로드/업로드 (+ dry_run이면 존재확인까지)
+      const tMedia = Date.now();
       const childCards = [];
       for (const c of built.cards) {
         const f = await findByName(AD_MEDIA_FOLDER, c.filename, KEY);
@@ -165,12 +167,14 @@ export default async function handler(req, res) {
         childCards.push({ image_hash: pi.image_hash, link: c.url, name: built.adName });
       }
       if (dryRun) return push("ok", "validate", { ad_name: built.adName, card_count: built.cards.length, message: "검증 통과" });
+      const media_ms = Date.now() - tMedia; // 카드 N장 검색+다운로드+업로드 합계
 
-      // 4) 캐러셀 광고 생성
+      // 4) 캐러셀 광고 생성 (createAd 3콜)
+      const tCreate = Date.now();
       const r = await createAd({ ad_type: "CAROUSEL", campaign_id, ad_name: built.adName, caption: built.caption, cards: childCards }, ctx);
-      const elapsed_ms = Date.now() - t0;
-      if (!r.ok) return push("error", r.stage, { ad_name: built.adName, adset_id: r.adset_id, card_count: childCards.length, elapsed_ms, message: r.error });
-      push("ok", "ad", { ad_name: built.adName, adset_id: r.adset_id, creative_id: r.creative_id, ad_id: r.ad_id, card_count: childCards.length, elapsed_ms, ad_permalink: adLink(r.ad_id) });
+      const create_ms = Date.now() - tCreate;
+      if (!r.ok) return push("error", r.stage, { ad_name: built.adName, adset_id: r.adset_id, card_count: childCards.length, media_ms, create_ms, message: r.error });
+      push("ok", "ad", { ad_name: built.adName, adset_id: r.adset_id, creative_id: r.creative_id, ad_id: r.ad_id, card_count: childCards.length, media_ms, create_ms, elapsed_ms: media_ms + create_ms, ad_permalink: adLink(r.ad_id) });
     }
 
     // ── 작업 단위 구성: image/video=행, carousel=광고그룹(첫 등장 순서 유지) ──
