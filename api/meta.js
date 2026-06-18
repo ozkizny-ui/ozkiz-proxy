@@ -206,7 +206,7 @@ export default async function handler(req, res) {
     if (action === "get_creative") {
       const id = req.query.id;
       if (!id) return res.status(400).json({ error: "id required" });
-      const r = await fetch(`${META_BASE}/${id}?fields=id,name,object_story_spec&access_token=${META_TOKEN}`);
+      const r = await fetch(`${META_BASE}/${id}?fields=id,name,instagram_user_id,effective_instagram_media_id,object_story_spec&access_token=${META_TOKEN}`);
       const d = await r.json();
       if (d.error) return res.status(400).json({ error: fbErr(d.error) });
       return res.status(200).json(d);
