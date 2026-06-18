@@ -1,4 +1,5 @@
-import { fbErr, createAd } from "../lib/meta.js";
+import { fbErr, createAd, uploadImage } from "../lib/meta.js";
+import { AD_MEDIA_FOLDER, driveKey, listFolder, findByName, downloadBase64 } from "../lib/drive.js";
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -44,23 +45,17 @@ export default async function handler(req, res) {
     //   1) 폴더 리스트 → 이미지/영상 자동 선택  2) 파일명으로 재검색(=production 경로)
     //   3) alt=media 다운로드 → 받은 바이트 == 보고된 size 인지(완전 수신) 검증
     if (action === "drive_test") {
-      const KEY = process.env.GOOGLE_DRIVE_API_KEY;
+      const KEY = driveKey();
       if (!KEY) return res.status(500).json({ error: "GOOGLE_DRIVE_API_KEY not configured" });
-      const FOLDER = "1Owv3k2aYgeatjnke-pS-PVKvN2AIggP5";
-      const DRIVE = "https://www.googleapis.com/drive/v3";
       const out = {};
 
-      // 1) 폴더 내용 리스트 (이름/타입/크기)
-      const listUrl = `${DRIVE}/files?q=${encodeURIComponent(`'${FOLDER}' in parents and trashed=false`)}` +
-        `&fields=${encodeURIComponent("files(id,name,mimeType,size)")}&pageSize=100&key=${KEY}`;
-      const lr = await fetch(listUrl);
-      const ld = await lr.json();
-      if (ld.error) return res.status(400).json({ error: `files.list 실패: ${ld.error.message}`, detail: ld.error });
-      const files = ld.files || [];
+      // 1) 폴더 리스트 (lib/drive.js)
+      const lst = await listFolder(AD_MEDIA_FOLDER, KEY);
+      if (!lst.ok) return res.status(400).json({ error: `files.list 실패: ${lst.error}` });
+      const files = lst.files;
       out.folder_files = files.map((f) => ({ name: f.name, mimeType: f.mimeType, size: f.size }));
 
-      // 2) 이미지 1 · 영상 1 자동 선택 — 기본은 '가장 큰' 파일(대용량 최악케이스 검증).
-      //    ?img=/vid= 부분일치(파일명 일부)로 강제 지정 가능. 한글 정규화 회피용 includes.
+      // 2) 이미지 1 · 영상 1 자동 선택 — 기본은 '가장 큰' 파일. ?img=/vid= 부분일치로 강제.
       const sz = (f) => (f.size != null ? Number(f.size) : 0);
       const biggest = (pred) => files.filter(pred).sort((a, b) => sz(b) - sz(a))[0];
       const pickImg = req.query.img ? files.find((f) => f.name.includes(req.query.img))
@@ -68,36 +63,23 @@ export default async function handler(req, res) {
       const pickVid = req.query.vid ? files.find((f) => f.name.includes(req.query.vid))
         : biggest((f) => (f.mimeType || "").startsWith("video/"));
 
-      // 파일명으로 재검색(production 경로) → 다운로드 → 바이트 검증
+      // 파일명 재검색(production 경로, lib) → 다운로드(lib) → 바이트 검증
       const verify = async (file, label) => {
         if (!file) return { label, error: "폴더에서 해당 유형 파일을 못 찾음" };
         const r = { label, name: file.name };
-        // 2a) 파일명으로 검색 (실제 대량 업로드가 쓸 경로 — 정확 일치, 중복 탐지)
-        const sUrl = `${DRIVE}/files?q=${encodeURIComponent(`'${FOLDER}' in parents and name='${file.name.replace(/'/g, "\\'")}' and trashed=false`)}` +
-          `&fields=${encodeURIComponent("files(id,name,mimeType,size)")}&key=${KEY}`;
-        const sr = await fetch(sUrl);
-        const sd = await sr.json();
-        if (sd.error) { r.search_error = sd.error.message; return r; }
-        const hits = sd.files || [];
-        r.search_hits = hits.length;          // 1이어야 정상(0=없음, 2+=중복)
-        if (hits.length !== 1) { r.search_note = hits.length === 0 ? "검색 0건" : "동명 중복"; return r; }
-        const found = hits[0];
-        r.file_id = found.id;
-        r.mimeType = found.mimeType;
-        r.reported_size = found.size != null ? Number(found.size) : null;
-        // 2b) alt=media 다운로드 → 바이트 수 측정
+        const s = await findByName(AD_MEDIA_FOLDER, file.name, KEY);
+        if (!s.ok) { r.search_error = s.error; return r; }
+        r.search_hits = s.hits;               // 1이어야 정상(0=없음, 2+=중복)
+        if (s.hits !== 1) { r.search_note = s.hits === 0 ? "검색 0건" : "동명 중복"; return r; }
+        r.file_id = s.file.id;
+        r.mimeType = s.file.mimeType;
+        r.reported_size = s.file.size != null ? Number(s.file.size) : null;
         const t0 = Date.now();
-        const dr = await fetch(`${DRIVE}/files/${found.id}?alt=media&key=${KEY}`);
-        if (!dr.ok) {
-          const txt = await dr.text();
-          r.download_error = `HTTP ${dr.status}`;
-          r.download_body = txt.slice(0, 300);
-          return r;
-        }
-        const buf = await dr.arrayBuffer();
-        r.downloaded_bytes = buf.byteLength;
+        const dl = await downloadBase64(s.file.id, KEY);
+        if (!dl.ok) { r.download_error = dl.error; return r; }
+        r.downloaded_bytes = dl.bytes;
         r.elapsed_ms = Date.now() - t0;
-        r.complete = r.reported_size != null ? (r.downloaded_bytes === r.reported_size) : "size 미보고";
+        r.complete = r.reported_size != null ? (dl.bytes === r.reported_size) : "size 미보고";
         return r;
       };
 
@@ -453,24 +435,13 @@ export default async function handler(req, res) {
       return res.status(200).json({ product_sets: data.data || [] });
     }
 
-    // ── 신규: 이미지 업로드 ───────────────────────────────────────
+    // ── 신규: 이미지 업로드 — 공용 uploadImage (단건/대량 공유) ──
     if (action === "upload_image") {
       const { image_base64, filename } = req.body;
       if (!image_base64) return res.status(400).json({ error: "image_base64 required" });
-      const r = await fetch(
-        `${META_BASE}/${AD_ACCOUNT}/adimages?access_token=${META_TOKEN}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bytes: image_base64, name: filename || "image.jpg" }),
-        }
-      );
-      const data = await r.json();
-      if (data.error) return res.status(400).json({ error: `이미지 업로드 실패: ${fbErr(data.error)}` });
-      // 해시 반환
-      const images = data.images || {};
-      const hash = Object.values(images)[0]?.hash;
-      return res.status(200).json({ hash });
+      const up = await uploadImage(image_base64, filename, { META_TOKEN, AD_ACCOUNT });
+      if (!up.ok) return res.status(400).json({ error: up.error });
+      return res.status(200).json({ hash: up.hash });
     }
 
     // ── 신규: 영상 업로드 ─────────────────────────────────────────
