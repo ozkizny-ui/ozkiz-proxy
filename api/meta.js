@@ -34,6 +34,70 @@ export default async function handler(req, res) {
 
   try {
 
+    // ── [임시 스파이크 · 검증 후 제거] Drive 폴더 파일명 검색 → 다운로드 검증 ──
+    //   공개 폴더("링크 있는 모든 사용자 뷰어") + Drive API 키 방식. 서비스 계정 미사용.
+    //   1) 폴더 리스트 → 이미지/영상 자동 선택  2) 파일명으로 재검색(=production 경로)
+    //   3) alt=media 다운로드 → 받은 바이트 == 보고된 size 인지(완전 수신) 검증
+    if (action === "drive_test") {
+      const KEY = process.env.GOOGLE_DRIVE_API_KEY;
+      if (!KEY) return res.status(500).json({ error: "GOOGLE_DRIVE_API_KEY not configured" });
+      const FOLDER = "1Owv3k2aYgeatjnke-pS-PVKvN2AIggP5";
+      const DRIVE = "https://www.googleapis.com/drive/v3";
+      const out = {};
+
+      // 1) 폴더 내용 리스트 (이름/타입/크기)
+      const listUrl = `${DRIVE}/files?q=${encodeURIComponent(`'${FOLDER}' in parents and trashed=false`)}` +
+        `&fields=${encodeURIComponent("files(id,name,mimeType,size)")}&pageSize=100&key=${KEY}`;
+      const lr = await fetch(listUrl);
+      const ld = await lr.json();
+      if (ld.error) return res.status(400).json({ error: `files.list 실패: ${ld.error.message}`, detail: ld.error });
+      const files = ld.files || [];
+      out.folder_files = files.map((f) => ({ name: f.name, mimeType: f.mimeType, size: f.size }));
+
+      // 2) 이미지 1 · 영상 1 자동 선택 (쿼리로 강제 지정 가능: ?img=파일명&vid=파일명)
+      const pickImg = req.query.img ? files.find((f) => f.name === req.query.img)
+        : files.find((f) => (f.mimeType || "").startsWith("image/"));
+      const pickVid = req.query.vid ? files.find((f) => f.name === req.query.vid)
+        : files.find((f) => (f.mimeType || "").startsWith("video/"));
+
+      // 파일명으로 재검색(production 경로) → 다운로드 → 바이트 검증
+      const verify = async (file, label) => {
+        if (!file) return { label, error: "폴더에서 해당 유형 파일을 못 찾음" };
+        const r = { label, name: file.name };
+        // 2a) 파일명으로 검색 (실제 대량 업로드가 쓸 경로 — 정확 일치, 중복 탐지)
+        const sUrl = `${DRIVE}/files?q=${encodeURIComponent(`'${FOLDER}' in parents and name='${file.name.replace(/'/g, "\\'")}' and trashed=false`)}` +
+          `&fields=${encodeURIComponent("files(id,name,mimeType,size)")}&key=${KEY}`;
+        const sr = await fetch(sUrl);
+        const sd = await sr.json();
+        if (sd.error) { r.search_error = sd.error.message; return r; }
+        const hits = sd.files || [];
+        r.search_hits = hits.length;          // 1이어야 정상(0=없음, 2+=중복)
+        if (hits.length !== 1) { r.search_note = hits.length === 0 ? "검색 0건" : "동명 중복"; return r; }
+        const found = hits[0];
+        r.file_id = found.id;
+        r.mimeType = found.mimeType;
+        r.reported_size = found.size != null ? Number(found.size) : null;
+        // 2b) alt=media 다운로드 → 바이트 수 측정
+        const t0 = Date.now();
+        const dr = await fetch(`${DRIVE}/files/${found.id}?alt=media&key=${KEY}`);
+        if (!dr.ok) {
+          const txt = await dr.text();
+          r.download_error = `HTTP ${dr.status}`;
+          r.download_body = txt.slice(0, 300);
+          return r;
+        }
+        const buf = await dr.arrayBuffer();
+        r.downloaded_bytes = buf.byteLength;
+        r.elapsed_ms = Date.now() - t0;
+        r.complete = r.reported_size != null ? (r.downloaded_bytes === r.reported_size) : "size 미보고";
+        return r;
+      };
+
+      out.image = await verify(pickImg, "image");
+      out.video = await verify(pickVid, "video");
+      return res.status(200).json(out);
+    }
+
     // ── [임시 진단 · 검증 후 제거] PA 릴스 URL → IG media id 해석 경로 탐색 ──
     if (action === "pa_resolve_test") {
       const reels_url = req.query.url || (req.body && req.body.url) || "";
