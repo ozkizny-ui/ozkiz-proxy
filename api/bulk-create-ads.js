@@ -12,13 +12,14 @@
 //
 // Vercel 함수시간 한도 때문에 한 요청은 소량(1~수 행) 권장 — 20행은 프론트가 청크로 나눠 호출(진행률).
 
-import { createAd, uploadImage, uploadVideoByUrl, fbErr } from "../lib/meta.js";
+import { createAd, uploadImage, uploadVideoByUrl, getVideoStatus, getVideoThumbnail, fbErr } from "../lib/meta.js";
 import { AD_MEDIA_FOLDER, driveKey, mediaUrl, findByName, downloadBase64 } from "../lib/drive.js";
 import { parseMediaFilename } from "../lib/filename.js";
 
 export const config = { maxDuration: 60 }; // 영상 ingest(파일당 ~10s+) 여유
 
 const META_BASE = "https://graph.facebook.com/v21.0";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -103,9 +104,20 @@ export default async function handler(req, res) {
             if (!up.ok) { push("error", "media", { ad_name: adName, message: up.error }); continue; }
             media = { image_hash: up.hash };
           } else {
+            // 영상: Drive file_url로 Meta가 직접 ingest → 인코딩 ready 대기 → 썸네일(필수) 조회
             const up = await uploadVideoByUrl(mediaUrl(file.id, KEY), filename, ctx);
             if (!up.ok) { push("error", "media", { ad_name: adName, message: up.error }); continue; }
-            media = { video_id: up.video_id };
+            let status = "";
+            for (let k = 0; k < 15; k++) {
+              const s = await getVideoStatus(up.video_id, ctx);
+              status = s.ok ? s.status : "";
+              if (status === "ready" || status === "error") break;
+              await sleep(3000);
+            }
+            if (status !== "ready") { push("error", "media", { ad_name: adName, message: `영상 처리 대기 초과(status=${status || "unknown"}) — 잠시 후 재시도` }); continue; }
+            const th = await getVideoThumbnail(up.video_id, ctx);
+            if (!th.ok) { push("error", "media", { ad_name: adName, message: `썸네일 조회 실패: ${th.error}` }); continue; }
+            media = { video_id: up.video_id, thumbnail_url: th.uri };
           }
           mediaCache.set(file.id, media);
         }
