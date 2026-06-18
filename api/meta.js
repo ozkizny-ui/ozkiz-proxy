@@ -54,11 +54,14 @@ export default async function handler(req, res) {
       const files = ld.files || [];
       out.folder_files = files.map((f) => ({ name: f.name, mimeType: f.mimeType, size: f.size }));
 
-      // 2) 이미지 1 · 영상 1 자동 선택 (쿼리로 강제 지정 가능: ?img=파일명&vid=파일명)
-      const pickImg = req.query.img ? files.find((f) => f.name === req.query.img)
-        : files.find((f) => (f.mimeType || "").startsWith("image/"));
-      const pickVid = req.query.vid ? files.find((f) => f.name === req.query.vid)
-        : files.find((f) => (f.mimeType || "").startsWith("video/"));
+      // 2) 이미지 1 · 영상 1 자동 선택 — 기본은 '가장 큰' 파일(대용량 최악케이스 검증).
+      //    ?img=/vid= 부분일치(파일명 일부)로 강제 지정 가능. 한글 정규화 회피용 includes.
+      const sz = (f) => (f.size != null ? Number(f.size) : 0);
+      const biggest = (pred) => files.filter(pred).sort((a, b) => sz(b) - sz(a))[0];
+      const pickImg = req.query.img ? files.find((f) => f.name.includes(req.query.img))
+        : biggest((f) => (f.mimeType || "").startsWith("image/"));
+      const pickVid = req.query.vid ? files.find((f) => f.name.includes(req.query.vid))
+        : biggest((f) => (f.mimeType || "").startsWith("video/"));
 
       // 파일명으로 재검색(production 경로) → 다운로드 → 바이트 검증
       const verify = async (file, label) => {
