@@ -167,7 +167,7 @@ export default async function handler(req, res) {
         // 카드 이미지 다운로드 → 업로드 (FILE 캐시)
         const pi = await prepImage(f.file, c.filename);
         if (!pi.ok) return push("error", "media", { ad_name: built.adName, message: `카드 '${c.filename}': ${pi.error}` });
-        childCards.push({ image_hash: pi.image_hash, link: c.url, name: built.adName });
+        childCards.push({ image_hash: pi.image_hash, link: c.url, name: c.headline || "" }); // 카드 헤드라인(없으면 빈값→createAd가 name 생략)
       }
       if (dryRun) return push("ok", "validate", { ad_name: built.adName, card_count: built.cards.length, message: "검증 통과" });
       const media_ms = Date.now() - tMedia; // 카드 N장 검색+다운로드+업로드 합계
