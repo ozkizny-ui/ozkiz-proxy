@@ -1,3 +1,5 @@
+import { fbErr, createAd } from "../lib/meta.mjs";
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -13,22 +15,6 @@ export default async function handler(req, res) {
   const META_BASE  = "https://graph.facebook.com/v21.0";
 
   if (!META_TOKEN) return res.status(500).json({ error: "META_ACCESS_TOKEN not configured" });
-
-  // Meta 그래프 에러를 진단 가능한 한 줄로 펼침 (message만으론 "Invalid parameter"라 원인 불명)
-  const fbErr = (err) => {
-    if (!err) return "unknown error";
-    const parts = [err.message || "error"];
-    if (err.error_user_title) parts.push(`[${err.error_user_title}]`);
-    if (err.error_user_msg)   parts.push(err.error_user_msg);
-    const blame = err.error_data && err.error_data.blame_field_specs;
-    if (blame) parts.push(`field=${JSON.stringify(blame)}`);
-    const tail = [];
-    if (err.code != null)         tail.push(`code ${err.code}`);
-    if (err.error_subcode != null) tail.push(`subcode ${err.error_subcode}`);
-    if (err.fbtrace_id)           tail.push(`fbtrace ${err.fbtrace_id}`);
-    if (tail.length) parts.push(`(${tail.join(", ")})`);
-    return parts.join(" ");
-  };
 
   const { action } = req.query;
 
@@ -489,186 +475,17 @@ export default async function handler(req, res) {
       return res.status(200).json({ video_id: data.id });
     }
 
-    // ── 신규: 광고 생성 (PAUSED) ──────────────────────────────────
+    // ── 신규: 광고 생성 (PAUSED) — 공용 createAd 호출 (단건/대량 공유) ──
     if (action === "create_ad") {
-      const body = req.body;
-      const {
-        ad_type,        // IMAGE | VIDEO | COLLECTION | PA
-        campaign_id,
-        ad_name,        // 광고명 = 광고세트명
-        landing_url,
-        caption,
-        // 이미지
-        image_hash,
-        // 영상
-        video_id,
-        // 컬렉션
-        product_set_id,
-        collection_label,
-        // PA
-        post_url,
-        // 캐러셀: [{ image_hash, link, name }] (카드 순서 = 배열 순서)
-        cards,
-      } = body;
-
-      if (!campaign_id || !ad_name) {
-        return res.status(400).json({ error: "campaign_id, ad_name required" });
+      const r = await createAd(req.body, { META_TOKEN, AD_ACCOUNT, PIXEL_ID, PAGE_ID, APP_ID });
+      // 기존 단건 응답 형태 1:1 보존 (성공 / 소재없음 경고 / 에러+debug)
+      if (r.error) {
+        return res.status(400).json(r.debug ? { error: r.error, debug_creative_body: r.debug } : { error: r.error });
       }
-
-      const UTM = `utm_source=facebook&utm_medium=display&utm_campaign=ozkizmall&utm_content={{ad.name}}`;
-      const trackingSpec = [
-        { "action.type": ["offsite_conversion"], "fb_pixel": [PIXEL_ID] },        // 웹사이트(픽셀) 이벤트
-        { "action.type": ["app_custom_event"], "application": [APP_ID] },          // 앱 이벤트
-      ];
-
-      // 1) 광고 세트 생성
-      const adSetBody = {
-        name: ad_name,
-        campaign_id,
-        status: "PAUSED",
-        billing_event: "IMPRESSIONS",
-        optimization_goal: "OFFSITE_CONVERSIONS",
-        bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-        daily_budget: 10000,
-        destination_type: "WEBSITE",
-        promoted_object: {
-          pixel_id: PIXEL_ID,
-          custom_event_type: "PURCHASE",
-        },
-        attribution_spec: [
-          { event_type: "CLICK_THROUGH", window_days: 1 },
-        ],
-        targeting: {
-          geo_locations: { countries: ["KR"] },
-          locales: [12], // 한국어 (ko) — Meta adlocale 코드 12. (이전 23은 스페인어였음)
-        },
-      };
-
-      const adSetRes = await fetch(
-        `${META_BASE}/${AD_ACCOUNT}/adsets?access_token=${META_TOKEN}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(adSetBody),
-        }
-      );
-      const adSetData = await adSetRes.json();
-      if (adSetData.error) return res.status(400).json({ error: `광고세트 생성 실패: ${fbErr(adSetData.error)}` });
-      const adset_id = adSetData.id;
-
-      // 2) 크리에이티브 생성
-      let creativeBody = { name: ad_name };
-      // 랜딩 URL에 UTM 부착 (캐러셀은 ad-level landing_url이 없으므로 안전 가드)
-      const addUtm = (u) => u ? `${u}${u.includes("?") ? "&" : "?"}${UTM}` : u;
-      const urlWithUtm = addUtm(landing_url || "");
-
-      if (ad_type === "CAROUSEL" && Array.isArray(cards) && cards.length >= 2) {
-        // 캐러셀: child_attachments에 입력 카드만. 마지막 자동 카드(end card) 끄기, 카드 순서 고정.
-        creativeBody.object_story_spec = {
-          page_id: PAGE_ID,
-          link_data: {
-            message: caption || "",
-            multi_share_end_card: false,   // end card 자동 추가 끔
-            multi_share_optimized: false,  // 카드 순서 = 입력 순서 (자동 재정렬 끔)
-            child_attachments: cards.map((c) => {
-              const cl = addUtm(c.link);
-              return {
-                image_hash: c.image_hash,
-                link: cl,
-                name: c.name,
-                call_to_action: { type: "SHOP_NOW", value: { link: cl } },
-              };
-            }),
-          },
-        };
-      } else if (ad_type === "IMAGE" && image_hash) {
-        creativeBody.object_story_spec = {
-          page_id: PAGE_ID,
-          link_data: {
-            image_hash,
-            link: urlWithUtm,
-            message: caption,
-            call_to_action: { type: "SHOP_NOW", value: { link: urlWithUtm } },
-          },
-        };
-      } else if (ad_type === "VIDEO" && video_id) {
-        creativeBody.object_story_spec = {
-          page_id: PAGE_ID,
-          video_data: {
-            video_id,
-            call_to_action: { type: "SHOP_NOW", value: { link: urlWithUtm } },
-            message: caption,
-          },
-        };
-      } else if (ad_type === "COLLECTION" && product_set_id) {
-        creativeBody.object_story_spec = {
-          page_id: PAGE_ID,
-          link_data: {
-            link: urlWithUtm,
-            message: caption,
-            call_to_action: { type: "SHOP_NOW", value: { link: urlWithUtm } },
-            child_attachments: [],
-          },
-        };
-        creativeBody.product_set_id = product_set_id;
-        if (collection_label) creativeBody.label = collection_label;
-      } else if (ad_type === "PA" && post_url) {
-        // 파트너십 광고: 기존 게시물 사용
-        creativeBody.object_story_spec = {
-          page_id: PAGE_ID,
-          link_data: {
-            link: urlWithUtm,
-            message: caption || "",
-            call_to_action: { type: "SHOP_NOW", value: { link: urlWithUtm } },
-          },
-        };
-        creativeBody.instagram_permalink_url = post_url;
-        creativeBody.enable_direct_install = false;
-      } else {
-        // 크리에이티브 없이 세트만 생성된 경우
-        return res.status(200).json({
-          adset_id,
-          ad_id: null,
-          warning: "소재 미업로드 - 광고세트만 생성됨. 메타 광고관리자에서 소재를 직접 추가해주세요.",
-        });
+      if (r.warning) {
+        return res.status(200).json({ adset_id: r.adset_id, ad_id: null, warning: r.warning });
       }
-
-      const creativeRes = await fetch(
-        `${META_BASE}/${AD_ACCOUNT}/adcreatives?access_token=${META_TOKEN}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(creativeBody),
-        }
-      );
-      const creativeData = await creativeRes.json();
-      if (creativeData.error) return res.status(400).json({ error: `크리에이티브 생성 실패: ${fbErr(creativeData.error)}`, debug_creative_body: creativeBody });
-      const creative_id = creativeData.id;
-
-      // 3) 광고 생성
-      const adRes = await fetch(
-        `${META_BASE}/${AD_ACCOUNT}/ads?access_token=${META_TOKEN}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: ad_name,
-            adset_id,
-            creative: { creative_id },
-            status: "PAUSED",
-            tracking_specs: trackingSpec,
-          }),
-        }
-      );
-      const adData = await adRes.json();
-      if (adData.error) return res.status(400).json({ error: `광고 생성 실패: ${fbErr(adData.error)}` });
-
-      return res.status(200).json({
-        success: true,
-        adset_id,
-        creative_id,
-        ad_id: adData.id,
-      });
+      return res.status(200).json({ success: true, adset_id: r.adset_id, creative_id: r.creative_id, ad_id: r.ad_id });
     }
 
     return res.status(400).json({ error: "Invalid action" });
