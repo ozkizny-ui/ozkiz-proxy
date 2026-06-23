@@ -53,17 +53,7 @@ async function readAll(table, select) {
   return all;
 }
 
-// replace: 전체 삭제 후 bulk insert. (현 프론트 동작과 동일 — 비원자적)
-// 안전장치: 빈 배열이면 거부(테이블 통째 비우기 방지). 삭제는 insert 직전 1회만.
-// ⚠️ 진짜 트랜잭션 원자성이 필요하면 후속으로 Postgres RPC(한 트랜잭션 내 delete+insert) 권장.
-async function replaceAll(table, rows) {
-  const del = await fetch(`${SB_URL}/rest/v1/${table}?id=gte.0`, {
-    method: 'DELETE',
-    headers: sbHeaders({ Prefer: 'return=minimal' }),
-  });
-  if (!del.ok) throw new Error(`delete ${table} ${del.status}: ${await del.text()}`);
-
-  let inserted = 0;
+async function insertChunks(table, rows) {
   for (let i = 0; i < rows.length; i += PAGE) {
     const slice = rows.slice(i, i + PAGE);
     const ins = await fetch(`${SB_URL}/rest/v1/${table}`, {
@@ -71,10 +61,52 @@ async function replaceAll(table, rows) {
       headers: sbHeaders({ Prefer: 'return=minimal' }),
       body: JSON.stringify(slice),
     });
-    if (!ins.ok) throw new Error(`insert ${table} @${i} ${ins.status}: ${await ins.text()}`);
-    inserted += slice.length;
+    if (!ins.ok) throw new Error(`insert @${i} ${ins.status}: ${await ins.text()}`);
   }
-  return { inserted };
+}
+async function deleteAll(table) {
+  const del = await fetch(`${SB_URL}/rest/v1/${table}?id=gte.0`, {
+    method: 'DELETE',
+    headers: sbHeaders({ Prefer: 'return=minimal' }),
+  });
+  if (!del.ok) throw new Error(`delete ${table} ${del.status}: ${await del.text()}`);
+}
+
+// replace: 전체 교체 + backup-restore (증발 방지).
+// 1) DELETE 전 현재 전체 행을 메모리 백업
+// 2) 삭제 → 새 데이터 삽입
+// 3) 삽입 실패 시: 부분삽입분 제거 후 백업 재삽입(원상복구). 복구도 실패하면 조용히 두지 말고
+//    "수동복구 필요" 명확한 에러로 throw.
+// 빈 배열은 핸들러에서 이미 거부(통째 비우기 방지).
+async function replaceAll(table, rows) {
+  // 1) 백업 (실패 시 삭제 전이라 데이터 보존된 채 중단)
+  let backup;
+  try {
+    backup = await readAll(table, '*');
+  } catch (e) {
+    throw new Error(`replace ${table}: 백업 읽기 실패 → 중단(데이터 보존). ${e.message}`);
+  }
+
+  // 2) 삭제 (삭제 자체 실패 시 테이블 보존된 채 throw)
+  await deleteAll(table);
+
+  // 3) 새 데이터 삽입; 실패 시 백업으로 원상복구
+  try {
+    await insertChunks(table, rows);
+    return { inserted: rows.length, restored: false, backupCount: backup.length };
+  } catch (insErr) {
+    try {
+      await deleteAll(table);            // 부분삽입분 제거
+      // 복구 재삽입은 id를 빼서(정상 insert와 동일) — id가 generated always여도 안전. id는 앱이 안 씀, updated_at은 보존.
+      const restoreRows = backup.map(({ id, ...rest }) => rest);
+      await insertChunks(table, restoreRows); // 원본 복구(id 재생성)
+      const err = new Error(`replace ${table}: 삽입 실패 → 원본 ${backup.length}행 복구 완료. 저장 실패(데이터 보존). 원인=${insErr.message}`);
+      err.restored = true;
+      throw err;
+    } catch (restoreErr) {
+      throw new Error(`⚠️ 수동복구 필요: replace ${table} 삽입 실패 후 복구도 실패 — 테이블이 부분/빈 상태일 수 있음(원본 ${backup.length}행). insert오류=${insErr.message} / 복구오류=${restoreErr.message}`);
+    }
+  }
 }
 
 // upsert: 단건/소량 merge-duplicates (PK/충돌키 기준). 현 프론트 동작과 동일.
