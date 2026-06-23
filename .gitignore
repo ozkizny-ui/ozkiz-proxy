@@ -1,0 +1,9 @@
+# 로컬 검증용 시크릿/링크 — 절대 커밋 금지
+.env
+.env.*
+!.env.example
+.vercel
+node_modules
+
+.vercel
+.env*
