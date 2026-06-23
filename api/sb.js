@@ -95,17 +95,19 @@ async function replaceAll(table, rows) {
     await insertChunks(table, rows);
     return { inserted: rows.length, restored: false, backupCount: backup.length };
   } catch (insErr) {
+    // 복구 시도 (이 try는 복구 작업만 감쌈)
     try {
       await deleteAll(table);            // 부분삽입분 제거
       // 복구 재삽입은 id를 빼서(정상 insert와 동일) — id가 generated always여도 안전. id는 앱이 안 씀, updated_at은 보존.
       const restoreRows = backup.map(({ id, ...rest }) => rest);
       await insertChunks(table, restoreRows); // 원본 복구(id 재생성)
-      const err = new Error(`replace ${table}: 삽입 실패 → 원본 ${backup.length}행 복구 완료. 저장 실패(데이터 보존). 원인=${insErr.message}`);
-      err.restored = true;
-      throw err;
     } catch (restoreErr) {
       throw new Error(`⚠️ 수동복구 필요: replace ${table} 삽입 실패 후 복구도 실패 — 테이블이 부분/빈 상태일 수 있음(원본 ${backup.length}행). insert오류=${insErr.message} / 복구오류=${restoreErr.message}`);
     }
+    // 복구 성공 → 저장은 실패했지만 원본 보존됨 (수동복구 불필요)
+    const err = new Error(`replace ${table}: 삽입 실패 → 원본 ${backup.length}행 복구 완료. 저장 실패(데이터 보존). 원인=${insErr.message}`);
+    err.restored = true;
+    throw err;
   }
 }
 
