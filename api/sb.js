@@ -9,6 +9,11 @@
 const SB_URL = process.env.SUPABASE_URL || 'https://baucagnqmtmaqlybjyzc.supabase.co';
 const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; // auto-adjust.js와 동일 env 재사용
 
+// inventory replace(34k: 백업읽기 + delete + ~35 insert ≈ 15~20s)가 기본 10초를 넘으므로 60초로.
+// 타임아웃 시 backup-restore가 안 돌아 데이터 손실 위험 → 충분한 여유 확보.
+// (bulk-create-ads.js가 같은 Hobby 플랜에서 maxDuration:60 사용 — 지원 입증됨)
+export const config = { maxDuration: 60 };
+
 // 허용목록: (table, op) 강제 + read 고정 select + upsert 충돌키.
 // 계획의 6개 테이블 중 app_settings 는 호출 0곳 → 미등록(자동 403).
 const ALLOW = {
