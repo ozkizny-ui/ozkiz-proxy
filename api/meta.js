@@ -1,10 +1,19 @@
 import { fbErr, createAd, uploadImage } from "../lib/meta.js";
 import { AD_MEDIA_FOLDER, driveKey, listFolder, findByName, downloadBase64 } from "../lib/drive.js";
+import { verifyBearer } from "../lib/auth.js";
+
+// 쓰기 액션 토큰 게이트(4단계). META_AUTH_ENABLED 미설정/기타 → false(게이트 OFF, 안전 기본).
+const META_AUTH_ENABLED = process.env.META_AUTH_ENABLED === 'true';
+// 읽기 액션만 열어둠(토큰 불필요). 그 외(예산변경/광고생성/삭제/업로드)는 게이트.
+const META_READ_ACTIONS = new Set([
+  'get_ads', 'get_adset', 'get_ad', 'get_creative', 'get_adset_insights',
+  'get_campaigns', 'get_product_sets', 'vurl_test', 'drive_test', 'pa_resolve_test',
+]);
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const META_TOKEN = process.env.META_ACCESS_TOKEN_AD_AUTO || process.env.META_ACCESS_TOKEN;
@@ -18,6 +27,11 @@ export default async function handler(req, res) {
   if (!META_TOKEN) return res.status(500).json({ error: "META_ACCESS_TOKEN not configured" });
 
   const { action } = req.query;
+
+  // 쓰기 액션 토큰 게이트 (읽기 allowlist 제외). 게이트 OFF(기본)면 통과 → 무중단.
+  if (META_AUTH_ENABLED && !META_READ_ACTIONS.has(action) && !verifyBearer(req)) {
+    return res.status(401).json({ error: "unauthorized: this action requires a write token" });
+  }
 
   try {
 

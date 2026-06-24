@@ -16,6 +16,10 @@ import { createAd, uploadImage, uploadVideoByUrl, getVideoStatus, getVideoThumbn
 import { AD_MEDIA_FOLDER, driveKey, mediaUrl, listFolder, matchByName, downloadBase64 } from "../lib/drive.js";
 import { parseMediaFilename } from "../lib/filename.js";
 import { buildCarousel } from "../lib/carousel.js";
+import { verifyBearer } from "../lib/auth.js";
+
+// 전체 토큰 게이트(4단계). BULK_AUTH_ENABLED 미설정/기타 → false(게이트 OFF, 안전 기본).
+const BULK_AUTH_ENABLED = process.env.BULK_AUTH_ENABLED === 'true';
 
 export const config = { maxDuration: 60 };
 
@@ -25,9 +29,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+  if (BULK_AUTH_ENABLED && !verifyBearer(req)) return res.status(401).json({ error: "unauthorized: write token required" });
 
   const META_TOKEN = process.env.META_ACCESS_TOKEN_AD_AUTO || process.env.META_ACCESS_TOKEN;
   const AD_ACCOUNT = process.env.META_AD_ACCOUNT_ID;

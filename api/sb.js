@@ -7,6 +7,7 @@
 //    RLS를 잠그면 안 됨(무인증 창구가 곧 구멍). RLS 잠금은 4단계 인증 이후 5단계에서만.
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { verifyBearer } from '../lib/auth.js';
 
 const SB_URL = process.env.SUPABASE_URL || 'https://baucagnqmtmaqlybjyzc.supabase.co';
 const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; // auto-adjust.js와 동일 env 재사용
@@ -30,6 +31,7 @@ const ALLOW = {
   sera:            { read: 'code,name,views,orders,opv,click_value',           replace: true },
   product_url:     { read: 'ez_name,url,product_no',          upsert: 'ez_name' }, // PK=ez_name
   creative_status: { read: 'key,status',                      upsert: 'key'     }, // 충돌키=key
+  budget_rules:    { upsert: 'id' },                                               // 규칙편집(5-bis 통합). read 불필요(프론트는 localStorage). auto-adjust는 service_role 직접이라 무관
 };
 
 const PAGE = 1000;
@@ -55,26 +57,12 @@ function signToken() {
   return { token: `${data}.${sig}`, exp: payload.exp };
 }
 
-function verifyToken(token) {
-  if (!token || !JWT_SECRET) return false;
-  const parts = token.split('.');
-  if (parts.length !== 3) return false;
-  const expected = createHmac('sha256', JWT_SECRET).update(`${parts[0]}.${parts[1]}`).digest('base64url');
-  const a = Buffer.from(parts[2]), b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return false; // 서명 불일치
-  try {
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    return !!payload.exp && payload.exp >= Math.floor(Date.now() / 1000); // 만료 확인
-  } catch { return false; }
-}
-
 // 쓰기 인증 훅: WRITE_AUTH_ENABLED=false면 통과(검증 OFF, 안전 기본).
-// 켜졌는데 JWT_SECRET 없으면 fail-closed(거부) — 미설정 상태로 켜는 사고 방지.
+// 검증 로직은 lib/auth.js의 verifyBearer로 분리(meta·bulk 공유) — JWT_SECRET 없으면 false(fail-closed).
+// signToken(발급)은 op:'auth' 전용이라 sb.js에 유지.
 async function requireWriteAuth(req) {
   if (!WRITE_AUTH_ENABLED) return true;
-  if (!JWT_SECRET) return false;
-  const m = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
-  return m ? verifyToken(m[1]) : false;
+  return verifyBearer(req);
 }
 
 // read: 1000행씩 페이지네이션해서 전량 반환 (inventory ~34k행 대응).
