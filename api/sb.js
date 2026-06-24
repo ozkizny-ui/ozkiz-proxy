@@ -6,8 +6,16 @@
 // ⚠️ 인증: 4단계에서 requireWriteAuth()에 구현. 지금은 통과(무인증) — 그래서 이 단계에서는
 //    RLS를 잠그면 안 됨(무인증 창구가 곧 구멍). RLS 잠금은 4단계 인증 이후 5단계에서만.
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 const SB_URL = process.env.SUPABASE_URL || 'https://baucagnqmtmaqlybjyzc.supabase.co';
 const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY; // auto-adjust.js와 동일 env 재사용
+
+// ── 쓰기 인증 env (4단계) ─────────────────────────────────────────────────────
+const APP_PASSWORD = process.env.SB_APP_PASSWORD;            // 팀 공용 쓰기 비밀번호 (Vercel env, 미설정 시 op:'auth' 503)
+const JWT_SECRET   = process.env.SB_JWT_SECRET;              // HS256 서명 시크릿 (Vercel env)
+const WRITE_AUTH_ENABLED = process.env.WRITE_AUTH_ENABLED === 'true'; // 미설정/기타 → false (검증 OFF, 안전 기본)
+const TOKEN_TTL = 12 * 60 * 60;                             // 12시간(초)
 
 // inventory replace(34k: 백업읽기 + delete + ~35 insert ≈ 15~20s)가 기본 10초를 넘으므로 60초로.
 // 타임아웃 시 backup-restore가 안 돌아 데이터 손실 위험 → 충분한 여유 확보.
@@ -35,10 +43,38 @@ function sbHeaders(extra) {
   };
 }
 
-// ── 쓰기 인증 훅 (4단계에서 구현). 지금은 통과. ───────────────────────────────
-// TODO(step4): 카페24 세션토큰 또는 앱 비밀번호 → 서명 토큰 검증. 실패 시 false.
+// ── 쓰기 인증 (앱 비밀번호 → HS256 JWT, 의존성 없음 — node:crypto) ─────────────
+const b64urlJson = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+
+// JWT_SECRET 존재 전제(op:'auth'에서 확인 후 호출).
+function signToken() {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { role: 'w', iat: now, exp: now + TOKEN_TTL };
+  const data = `${b64urlJson({ alg: 'HS256', typ: 'JWT' })}.${b64urlJson(payload)}`;
+  const sig = createHmac('sha256', JWT_SECRET).update(data).digest('base64url');
+  return { token: `${data}.${sig}`, exp: payload.exp };
+}
+
+function verifyToken(token) {
+  if (!token || !JWT_SECRET) return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  const expected = createHmac('sha256', JWT_SECRET).update(`${parts[0]}.${parts[1]}`).digest('base64url');
+  const a = Buffer.from(parts[2]), b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return false; // 서명 불일치
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return !!payload.exp && payload.exp >= Math.floor(Date.now() / 1000); // 만료 확인
+  } catch { return false; }
+}
+
+// 쓰기 인증 훅: WRITE_AUTH_ENABLED=false면 통과(검증 OFF, 안전 기본).
+// 켜졌는데 JWT_SECRET 없으면 fail-closed(거부) — 미설정 상태로 켜는 사고 방지.
 async function requireWriteAuth(req) {
-  return true;
+  if (!WRITE_AUTH_ENABLED) return true;
+  if (!JWT_SECRET) return false;
+  const m = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  return m ? verifyToken(m[1]) : false;
 }
 
 // read: 1000행씩 페이지네이션해서 전량 반환 (inventory ~34k행 대응).
@@ -135,13 +171,22 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!SB_KEY) return res.status(500).json({ error: 'SUPABASE_SERVICE_ROLE_KEY not configured' });
 
-  const { op, table, rows } = req.body || {};
-  if (!op || !table) return res.status(400).json({ error: 'op and table are required' });
-
-  const conf = ALLOW[table];
-  if (!conf) return res.status(403).json({ error: `table not allowed: ${table}` });
+  const { op, table, rows, password } = req.body || {};
+  if (!op) return res.status(400).json({ error: 'op is required' });
 
   try {
+    // 토큰 발급 (table 불필요): 비번 일치 → 12h HS256 JWT. env 미설정 시 503(크래시 X).
+    if (op === 'auth') {
+      if (!APP_PASSWORD || !JWT_SECRET) return res.status(503).json({ error: 'auth not configured (SB_APP_PASSWORD/SB_JWT_SECRET 미설정)' });
+      const a = Buffer.from(String(password || '')), b = Buffer.from(APP_PASSWORD);
+      if (!(a.length === b.length && timingSafeEqual(a, b))) return res.status(401).json({ error: 'invalid password' });
+      return res.status(200).json(signToken());
+    }
+
+    if (!table) return res.status(400).json({ error: 'table is required' });
+    const conf = ALLOW[table];
+    if (!conf) return res.status(403).json({ error: `table not allowed: ${table}` });
+
     if (op === 'read') {
       if (!conf.read) return res.status(403).json({ error: `read not allowed: ${table}` });
       const data = await readAll(table, conf.read);
