@@ -236,11 +236,12 @@ export default async function handler(req, res) {
       return res.status(200).json(d);
     }
 
-    // ── 캔버스(인스턴트 경험) 조회 — 컬렉션 캔버스 구조 역설계용 ──
+    // ── 캔버스(인스턴트 경험) 조회 — 컬렉션 캔버스 구조 역설계용. fields는 쿼리로 자유 지정. ──
     if (action === "get_canvas") {
       const id = req.query.id;
       if (!id) return res.status(400).json({ error: "id required" });
-      const r = await fetch(`${META_BASE}/${id}?fields=id,name,is_published,body_element_ids,canvas_elements&access_token=${META_TOKEN}`);
+      const fields = req.query.fields || "id,name,is_published";
+      const r = await fetch(`${META_BASE}/${id}?fields=${encodeURIComponent(fields)}&access_token=${META_TOKEN}`);
       const d = await r.json();
       if (d.error) return res.status(400).json({ error: fbErr(d.error) });
       return res.status(200).json(d);
