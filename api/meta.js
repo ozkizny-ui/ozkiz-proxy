@@ -460,13 +460,18 @@ export default async function handler(req, res) {
     // ── 신규: 제품 세트 목록 조회 (컬렉션용) ─────────────────────
     if (action === "get_product_sets") {
       if (!CATALOG_ID) return res.status(500).json({ error: "META_CATALOG_ID not configured" });
-      const r = await fetch(
-        `${META_BASE}/${CATALOG_ID}/product_sets?access_token=${META_TOKEN}` +
-        `&fields=id,name,filter,product_count&limit=50`
-      );
-      const data = await r.json();
-      if (data.error) return res.status(400).json({ error: data.error.message });
-      return res.status(200).json({ product_sets: data.data || [] });
+      // 페이지네이션: paging.next 따라 전체 수집 (기존 limit=50 캡 제거 — 50개 초과분이 누락되던 버그).
+      // 최대 30페이지(~3000개) 안전캡.
+      let url = `${META_BASE}/${CATALOG_ID}/product_sets?access_token=${META_TOKEN}&fields=id,name,filter,product_count&limit=100`;
+      const all = [];
+      for (let i = 0; i < 30 && url; i++) {
+        const r = await fetch(url);
+        const data = await r.json();
+        if (data.error) return res.status(400).json({ error: data.error.message });
+        all.push(...(data.data || []));
+        url = (data.paging && data.paging.next) || null;
+      }
+      return res.status(200).json({ product_sets: all });
     }
 
     // ── 신규: 이미지 업로드 — 공용 uploadImage (단건/대량 공유) ──
