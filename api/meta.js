@@ -7,7 +7,7 @@ const META_AUTH_ENABLED = process.env.META_AUTH_ENABLED === 'true';
 // 읽기 액션만 열어둠(토큰 불필요). 그 외(예산변경/광고생성/삭제/업로드)는 게이트.
 const META_READ_ACTIONS = new Set([
   'get_ads', 'get_adset', 'get_ad', 'get_creative', 'get_adset_insights',
-  'get_campaigns', 'get_product_sets', 'vurl_test', 'drive_test', 'pa_resolve_test',
+  'get_campaigns', 'get_product_sets', 'vurl_test', 'drive_test', 'pa_resolve_test', 'get_canvas',
 ]);
 
 export default async function handler(req, res) {
@@ -231,6 +231,16 @@ export default async function handler(req, res) {
       const id = req.query.id;
       if (!id) return res.status(400).json({ error: "id required" });
       const r = await fetch(`${META_BASE}/${id}?fields=id,name,instagram_user_id,effective_instagram_media_id,object_story_spec&access_token=${META_TOKEN}`);
+      const d = await r.json();
+      if (d.error) return res.status(400).json({ error: fbErr(d.error) });
+      return res.status(200).json(d);
+    }
+
+    // ── 캔버스(인스턴트 경험) 조회 — 컬렉션 캔버스 구조 역설계용 ──
+    if (action === "get_canvas") {
+      const id = req.query.id;
+      if (!id) return res.status(400).json({ error: "id required" });
+      const r = await fetch(`${META_BASE}/${id}?fields=id,name,is_published,body_element_ids,canvas_elements&access_token=${META_TOKEN}`);
       const d = await r.json();
       if (d.error) return res.status(400).json({ error: fbErr(d.error) });
       return res.status(200).json(d);
