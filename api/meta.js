@@ -181,24 +181,44 @@ export default async function handler(req, res) {
         } catch (e) { out.steps.v2_guess = { fetch_error: e.message }; }
       }
 
-      // 7) (create=1일 때만) source_instagram_media_id로 adcreative 생성 시도 — 여러 페이로드 형태
-      if ((req.query.create === "1") && out.decoded_media_pk) {
-        const igUser = req.query.ig_user_id ||
-          (out.steps.act_ig_accounts?.data?.[0]?.id) || null;
+      // 6.7) creator_username → business_discovery (read-only): 크리에이터 IG id + 미디어(그래프 media id)
+      const creatorUsername = req.query.creator_username || "";
+      if (creatorUsername && brandIg) {
+        try {
+          const fields = `business_discovery.username(${creatorUsername}){id,username,media.limit(50){id,shortcode,media_type,permalink}}`;
+          const r = await fetch(`${META_BASE}/${brandIg}?fields=${encodeURIComponent(fields)}&access_token=${META_TOKEN}`);
+          const bd = await r.json();
+          out.steps.creator_discovery = bd;
+          out.creator_ig_id = bd?.business_discovery?.id || null;
+          const bdMedia = bd?.business_discovery?.media?.data || [];
+          out.matched_media = bdMedia.find((m) => m.shortcode === shortcode) || null;
+        } catch (e) { out.steps.creator_discovery = { fetch_error: e.message }; }
+      }
+      // 6.8) V2 id 후보 GET (read): {pk}_{creator_ig_id}
+      if (out.decoded_media_pk && out.creator_ig_id) {
+        try {
+          const guess = `${out.decoded_media_pk}_${out.creator_ig_id}`;
+          const r = await fetch(`${META_BASE}/${guess}?fields=id,media_type,permalink&access_token=${META_TOKEN}`);
+          out.steps.v2_creator_guess = { id_tried: guess, resp: await r.json() };
+        } catch (e) { out.steps.v2_creator_guess = { fetch_error: e.message }; }
+      }
+
+      // 7) (create=1일 때만) source_instagram_media_id로 adcreative 생성 시도 — 후보 media id별
+      if (req.query.create === "1") {
+        const igUser = req.query.ig_user_id || brandIg || null;
         out.ig_user_id_used = igUser;
-        const pk = out.decoded_media_pk;
-        const attempts = {
-          A_source_only:        { name: "PA_spike_A", source_instagram_media_id: pk },
-          B_source_iguser:      { name: "PA_spike_B", source_instagram_media_id: pk, instagram_user_id: igUser },
-          C_oss_iguser_source:  { name: "PA_spike_C", object_story_spec: { page_id: PAGE_ID, instagram_user_id: igUser }, source_instagram_media_id: pk },
-        };
+        const candidates = {};
+        if (out.matched_media?.id) candidates.discovery_media_id = out.matched_media.id;
+        if (out.decoded_media_pk && out.creator_ig_id) candidates.pk_creator = `${out.decoded_media_pk}_${out.creator_ig_id}`;
+        if (out.decoded_media_pk) candidates.pk_only = out.decoded_media_pk;
         out.creative_attempts = {};
-        for (const [k, payload] of Object.entries(attempts)) {
+        for (const [k, mediaId] of Object.entries(candidates)) {
           try {
             const r = await fetch(`${META_BASE}/${AD_ACCOUNT}/adcreatives?access_token=${META_TOKEN}`, {
-              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: `PA_spike_${k}`, source_instagram_media_id: mediaId, instagram_user_id: igUser }),
             });
-            out.creative_attempts[k] = await r.json();
+            out.creative_attempts[k] = { media_id: mediaId, resp: await r.json() };
           } catch (e) { out.creative_attempts[k] = { fetch_error: e.message }; }
         }
       }
