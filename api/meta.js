@@ -194,6 +194,24 @@ export default async function handler(req, res) {
           out.matched_media = bdMedia.find((m) => m.shortcode === shortcode) || null;
         } catch (e) { out.steps.creator_discovery = { fetch_error: e.message }; }
       }
+      // 6.75) bc_ad_permissions에서 creator_username 매칭 (business_discovery 실패 시 creator_ig_id 확보)
+      if (creatorUsername && !out.creator_ig_id && brandIg) {
+        try {
+          let url = `${META_BASE}/${brandIg}/branded_content_ad_permissions?fields=creator_ig_id,creator_username,permission_status&limit=50&access_token=${META_TOKEN}`;
+          let found = null, pages = 0;
+          while (url && pages < 15) {
+            const r = await fetch(url);
+            const j = await r.json();
+            if (j.error) { out.steps.bc_search_error = j.error; break; }
+            found = (j.data || []).find((p) => (p.creator_username || "").toLowerCase() === creatorUsername.toLowerCase());
+            if (found) break;
+            url = j.paging?.next || null;
+            pages++;
+          }
+          out.creator_match = found || null;
+          if (found) out.creator_ig_id = found.creator_ig_id;
+        } catch (e) { out.steps.bc_search_error = { fetch_error: e.message }; }
+      }
       // 6.8) V2 id 후보 GET (read): {pk}_{creator_ig_id}
       if (out.decoded_media_pk && out.creator_ig_id) {
         try {
