@@ -212,6 +212,15 @@ export default async function handler(req, res) {
           if (found) out.creator_ig_id = found.creator_ig_id;
         } catch (e) { out.steps.bc_search_error = { fetch_error: e.message }; }
       }
+      // 6.85) 크리에이터 미디어 직접 읽기 (BC 권한으로 읽히면 shortcode 매칭→진짜 v2 media id)
+      if (out.creator_ig_id && !out.matched_media) {
+        try {
+          const r = await fetch(`${META_BASE}/${out.creator_ig_id}/media?fields=id,shortcode,permalink,media_type&limit=50&access_token=${META_TOKEN}`);
+          const j = await r.json();
+          out.steps.creator_media = j.error ? { error: j.error } : { count: (j.data || []).length };
+          if (!j.error) out.matched_media = (j.data || []).find((m) => m.shortcode === shortcode) || null;
+        } catch (e) { out.steps.creator_media = { fetch_error: e.message }; }
+      }
       // 6.8) V2 id 후보 GET (read): {pk}_{creator_ig_id}
       if (out.decoded_media_pk && out.creator_ig_id) {
         try {
