@@ -341,13 +341,27 @@ export default async function handler(req, res) {
         `insights.time_range({"since":"${today}","until":"${today}"})` +
         `{spend,purchase_roas,impressions,actions,action_values}`
       ].join(",");
-      const r = await fetch(
-        `${META_BASE}/${AD_ACCOUNT}/ads?access_token=${META_TOKEN}` +
-        `&fields=${encodeURIComponent(fields)}&limit=200`
-      );
-      const data = await r.json();
-      if (data.error) return res.status(400).json({ error: data.error.message });
-      return res.status(200).json(data);
+      // ★ 계정 광고 4000개+ 중 ACTIVE(~313)만 서버측 필터. 정렬 미보장이라
+      //   필터 없이 limit200 한 번이면 라이브 광고가 누락돼 '미집행' 오표시됨.
+      const base = `${META_BASE}/${AD_ACCOUNT}/ads?access_token=${META_TOKEN}` +
+        `&fields=${encodeURIComponent(fields)}` +
+        `&effective_status=${encodeURIComponent(JSON.stringify(["ACTIVE"]))}` +
+        `&limit=200`;
+      // limit200 × 최대 2페이지(=400 상한) 페이지네이션. 2페이지 후에도 next가
+      //   남으면 ACTIVE가 400 초과 → truncated:true (클라이언트가 경고 배너 표시).
+      const CAP_PAGES = 2;
+      let url = base, pages = 0, all = [], truncated = false;
+      while (url && pages < CAP_PAGES) {
+        const r = await fetch(url);
+        const data = await r.json();
+        if (data.error) return res.status(400).json({ error: data.error.message });
+        all = all.concat(data.data || []);
+        pages++;
+        const next = data.paging && data.paging.next;
+        if (pages >= CAP_PAGES) { truncated = !!next; break; }
+        url = next || null;
+      }
+      return res.status(200).json({ data: all, count: all.length, truncated });
     }
 
     // ── 신규: 광고세트 단위 일자별·시간대별 인사이트 (최근 N일, KST 오늘 포함) ──
