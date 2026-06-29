@@ -32,6 +32,7 @@ const ALLOW = {
   product_url:     { read: 'ez_name,url,product_no',          upsert: 'ez_name' }, // PK=ez_name
   creative_status: { read: 'key,status',                      upsert: 'key'     }, // 충돌키=key
   budget_rules:    { upsert: 'id' },                                               // 규칙편집(5-bis 통합). read 불필요(프론트는 localStorage). auto-adjust는 service_role 직접이라 무관
+  budget_rule_edits: { read: 'created_at,editor,rule_id,field,before_val,after_val,memo', upsert: 'id' }, // 규칙편집 감사로그(append). id auto-gen이라 upsert=insert
 };
 
 const PAGE = 1000;
