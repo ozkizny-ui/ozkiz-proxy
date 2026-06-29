@@ -107,7 +107,8 @@ export default async function handler(req, res) {
       const file = found.file;
       const mime = file.mimeType || "";
       if (type === "image" && !mime.startsWith("image/")) return push("error", "media", { message: `type=image인데 파일이 이미지 아님(${mime})` });
-      if (type === "video" && !mime.startsWith("video/")) return push("error", "media", { message: `type=video인데 파일이 영상 아님(${mime})` });
+      // GIF(image/gif)는 Meta가 advideos로 영상 변환·재생하므로 영상 경로 허용
+      if (type === "video" && !(mime.startsWith("video/") || mime === "image/gif")) return push("error", "media", { message: `type=video인데 파일이 영상/GIF 아님(${mime})` });
 
       const { adName } = parseMediaFilename(filename);
       if (dryRun) return push("ok", "validate", { ad_name: adName, file_id: file.id, size: file.size, message: "검증 통과" });
