@@ -28,7 +28,7 @@ export const config = { maxDuration: 60 };
 const ALLOW = {
   inventory:       { read: 'name,option,avail,store,cost,rep_code,updated_at', replace: true },
   strategy:        { read: 'name,season,category',                             replace: true },
-  sera:            { read: 'code,name,views,orders,opv,click_value',           replace: true },
+  sera:            { read: 'code,name,views,orders,opv,click_value,updated_at', replace: true },
   product_url:     { read: 'ez_name,url,product_no',          upsert: 'ez_name' }, // PK=ez_name
   creative_status: { read: 'key,status',                      upsert: 'key'     }, // 충돌키=key
   budget_rules:    { upsert: 'id' },                                               // 규칙편집(5-bis 통합). read 불필요(프론트는 localStorage). auto-adjust는 service_role 직접이라 무관
