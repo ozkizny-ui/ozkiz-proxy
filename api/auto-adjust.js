@@ -283,14 +283,23 @@ export default async function handler(req, res) {
       `{spend,purchase_roas,impressions,actions,action_values}`,
     ].join(',');
 
-    const r = await fetch(
+    // ACTIVE 서버필터 + paging.next 끝까지(계정 광고 4000개+ 중 200개만 조정되던 버그 수정)
+    let _url =
       `${META_BASE}/${AD_ACCOUNT}/ads?access_token=${META_TOKEN}` +
-      `&fields=${encodeURIComponent(fields)}&limit=200`
-    );
-    const data = await r.json();
-    if (data.error) throw new Error(data.error.message);
-
-    const ads = (data.data || []).filter(ad => ad.effective_status === 'ACTIVE');
+      `&fields=${encodeURIComponent(fields)}` +
+      `&effective_status=${encodeURIComponent(JSON.stringify(['ACTIVE']))}` +
+      `&limit=200`;
+    const _all = [];
+    let _guard = 0;
+    while (_url && _guard < 20) {
+      const r = await fetch(_url);
+      const data = await r.json();
+      if (data.error) throw new Error(data.error.message);
+      if (Array.isArray(data.data)) _all.push(...data.data);
+      _url = data.paging?.next || null;
+      _guard++;
+    }
+    const ads = _all.filter(ad => ad.effective_status === 'ACTIVE'); // 이중 안전장치
 
     const getAction = (actions, type) => {
       const a = (actions || []).find(a => a.action_type === type);
