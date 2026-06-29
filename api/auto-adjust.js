@@ -167,6 +167,13 @@ export default async function handler(req, res) {
       check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
     },
+    {
+      id: 'r17', triggerMin: 16*60, dir: 'dn',
+      label: '오후 4:00 · ROAS 150~200% → 구매전환값의 70%',
+      // 방향 가드 내장: 계산값(구매전환값×0.7)이 현재 예산보다 작을 때만 발동(트림 전용)
+      check: (ad) => ad.roas >= 150 && ad.roas < 200 && ad.purchaseValue > 0 && ad.budget > Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
+      calc:  (ad) => Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
+    },
   ];
 
   const SB_URL = process.env.SUPABASE_URL || 'https://baucagnqmtmaqlybjyzc.supabase.co';
