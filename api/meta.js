@@ -6,7 +6,7 @@ import { verifyBearer } from "../lib/auth.js";
 const META_AUTH_ENABLED = process.env.META_AUTH_ENABLED === 'true';
 // 읽기 액션만 열어둠(토큰 불필요). 그 외(예산변경/광고생성/삭제/업로드)는 게이트.
 const META_READ_ACTIONS = new Set([
-  'get_ads', 'get_adset', 'get_ad', 'get_creative', 'get_adset_insights',
+  'get_ads', 'get_adset', 'get_ad', 'get_creative', 'get_adset_insights', 'get_daily_insights',
   'get_campaigns', 'get_product_sets', 'vurl_test', 'drive_test', 'pa_resolve_test', 'get_canvas',
 ]);
 
@@ -492,6 +492,50 @@ export default async function handler(req, res) {
       });
 
       return res.status(200).json({ since, until, days, count: adsets.length, server_time_kst, adsets });
+    }
+
+    // ── 신규: 계정 일별 블렌디드 ROAS (예산규칙 분석 탭용) ──
+    // level=account, time_increment=1, 1d_click(광고관리자 일치). roas = 구매전환값/소진×100.
+    if (action === "get_daily_insights") {
+      const days = Math.min(Math.max(parseInt(req.query.days || "14", 10) || 14, 1), 90);
+      const kstNowD = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const until = kstNowD.toISOString().split("T")[0];
+      const since = new Date(kstNowD.getTime() - (days - 1) * 86400000).toISOString().split("T")[0];
+      const PURCHASE = "offsite_conversion.fb_pixel_purchase";
+      let url =
+        `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
+        `&level=account&time_increment=1` +
+        `&action_attribution_windows=${encodeURIComponent(JSON.stringify(["1d_click"]))}` +
+        `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
+        `&fields=${encodeURIComponent("spend,actions,action_values")}&limit=500`;
+      const rows = [];
+      let guard = 0;
+      while (url && guard < 50) {
+        const r = await fetch(url);
+        const data = await r.json();
+        if (data.error) return res.status(400).json({ error: data.error.message });
+        if (Array.isArray(data.data)) rows.push(...data.data);
+        url = data.paging?.next || null;
+        guard++;
+      }
+      const pickP = (arr) => {
+        const a = (arr || []).find((x) => x.action_type === PURCHASE);
+        if (!a) return 0;
+        const v = a["1d_click"] != null ? a["1d_click"] : a.value;
+        return parseFloat(v) || 0;
+      };
+      const daily = rows.map((row) => {
+        const spend = parseFloat(row.spend || 0) || 0;
+        const purchaseValue = pickP(row.action_values);
+        return {
+          date: row.date_start,
+          spend: Math.round(spend),
+          purchaseValue: Math.round(purchaseValue),
+          purchases: pickP(row.actions),
+          roas: spend > 0 ? Math.round((purchaseValue / spend) * 100) : null,
+        };
+      }).sort((a, b) => (a.date < b.date ? -1 : 1));
+      return res.status(200).json({ since, until, days, data: daily });
     }
 
     // ── 기존: 예산 변경 ───────────────────────────────────────────
