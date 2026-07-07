@@ -361,6 +361,10 @@ export default async function handler(req, res) {
       const productName = (ad.name || '').split(';')[0].trim();
       if (productName.includes('카테고리')) continue;
 
+      // 예산 0 스킵: CBO(캠페인 예산 관리) 광고세트는 daily_budget이 없어 0으로 읽힘.
+      // 0원이 최소클램프(1,000원)로 둔갑해 Meta가 거부 → r13 등에서 매일 무의미한 실패가 쌓였음(릴레이특가 168건).
+      if (!budget) continue;
+
       for (const rule of activeRules) {
         if (!rule.check(adData)) continue;
         const newBudget = Math.max(rule.calc(adData), 1000);
