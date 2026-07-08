@@ -357,9 +357,9 @@ export default async function handler(req, res) {
 
       const adData = { roas, budget, cart, purchases, purchaseValue, spend };
 
-      // 카테고리 광고 스킵
+      // 카테고리 광고도 규칙 대상 (2026-07-08 스킵 제거 — 근거 없는 초기 구현 잔재.
+      // 프론트 수동 실행과 동일 동작. 카테고리 광고의 '재고 기반 품절 OFF' 제외는 프론트에서 원래대로 유지)
       const productName = (ad.name || '').split(';')[0].trim();
-      if (productName.includes('카테고리')) continue;
 
       // 예산 0 스킵: CBO(캠페인 예산 관리) 광고세트는 daily_budget이 없어 0으로 읽힘.
       // 0원이 최소클램프(1,000원)로 둔갑해 Meta가 거부 → r13 등에서 매일 무의미한 실패가 쌓였음(릴레이특가 168건).
