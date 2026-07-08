@@ -14,23 +14,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // ── [임시 진단 · 스케줄러 정체 확인 후 제거] 호출자 UA/IP를 budget_rule_edits에 기록 ──
-  // 스케줄러(30분 간격 호출)가 어디서 도는지 아무도 모름(2026-07-08). UA로 서비스 식별 목적.
-  try {
-    const SBu = process.env.SUPABASE_URL || 'https://baucagnqmtmaqlybjyzc.supabase.co';
-    const SBk = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (SBk) {
-      fetch(`${SBu}/rest/v1/budget_rule_edits`, {
-        method: 'POST',
-        headers: { apikey: SBk, Authorization: `Bearer ${SBk}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-        body: JSON.stringify({
-          editor: '_scheduler_trace', rule_id: 'trace', field: 'caller',
-          after_val: String(req.headers['user-agent'] || '(no UA)').slice(0, 180),
-          memo: `ip=${String(req.headers['x-forwarded-for'] || '').split(',')[0]} via=${String(req.headers['via'] || '')}`.slice(0, 180),
-        }),
-      }).catch(() => {});
-    }
-  } catch (e) {}
+  // 스케줄러 = cron-job.org (2026-07-08 UA 추적으로 확인 — 운영시간 중 30분 간격 호출, CRON_SECRET 헤더 설정됨)
 
   const META_TOKEN = process.env.META_ACCESS_TOKEN_AD_AUTO || process.env.META_ACCESS_TOKEN;
   const AD_ACCOUNT = process.env.META_AD_ACCOUNT_ID;
