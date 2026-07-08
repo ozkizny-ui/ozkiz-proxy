@@ -369,6 +369,9 @@ export default async function handler(req, res) {
         if (!rule.check(adData)) continue;
         const newBudget = Math.max(rule.calc(adData), 1000);
         if (newBudget === budget) continue;
+        // 미세 조정 스킵(전역 가드, 2026-07-08): 증감 폭 13% 미만은 성과 영향 없이
+        // 광고세트 수정 이벤트(머신러닝 재학습 위험)만 만들므로 발동 안 함. (최근 2주 기준 전체 조정의 6%만 해당)
+        if (Math.abs(newBudget - budget) / budget < 0.13) continue;
         // r10·r12·r16 감액 방향 가드: 감액 규칙인데 계산값이 현재 예산 이상(증액/동일)이면 발동 안 함.
         // (ROAS 100~200% 등에서 구매전환값 50%가 현재 예산보다 커 오히려 증액되던 문제 차단)
         if ((rule.id === 'r10' || rule.id === 'r12' || rule.id === 'r16') && newBudget >= budget) continue;
