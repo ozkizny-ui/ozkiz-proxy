@@ -40,6 +40,15 @@ export default async function handler(req, res) {
   // ── 예산 규칙 정의 ──────────────────────────────────────────────
   const BUDGET_RULES = [
     {
+      // OFF 규칙은 배열 맨 앞 — 광고당 첫 매칭 규칙만 적용되므로 OFF가 예산 조정보다 우선.
+      // 예산 ₩20,000 이상 제외: 성과가 있어 증액됐던 광고가 최근 3일 이상치로 꺼지는 것 방지(사용자 지정 가드).
+      id: 'r18', triggerMin: 8*60+40, dir: 'off',
+      label: '오전 8:40 · 최근 3일(전일까지) 소진 ≥₩25,000 + 구매 0 → 광고 OFF (현재 예산 ₩20,000 이상이면 제외)',
+      // ad.purchases === 0: 오늘 아침 막 구매가 발생한 광고는 살림 (3일 창엔 오늘이 빠지므로 별도 확인)
+      check: (ad) => ad.spend3d >= 25000 && ad.purchases3d === 0 && ad.purchases === 0 && ad.budget < 20000,
+      calc:  () => 0,
+    },
+    {
       id: 'r1', triggerMin: 8*60, dir: 'dn',
       label: '오전 8:00 · 장바구니 ≤2 + ROAS ≤150% → ₩20,000',
       check: (ad) => ad.cart <= 2 && ad.roas <= 150 && ad.roas > 0,
@@ -306,6 +315,28 @@ export default async function handler(req, res) {
       return a ? parseFloat(a.value) : 0;
     };
 
+    // ── r18 OFF 판정용: 최근 3일(전일까지) 광고별 누적 소진·구매 ──
+    // 별도 호출 + 실패 격리: 이 조회가 실패해도 stats3d={} → r18만 미발동, 다른 규칙 무영향.
+    const since3 = new Date(kstNow.getTime() - 3 * 86400000).toISOString().split('T')[0];
+    const until3 = new Date(kstNow.getTime() - 1 * 86400000).toISOString().split('T')[0];
+    let stats3d = {};
+    try {
+      let u3 = `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
+        `&level=ad&fields=${encodeURIComponent('ad_id,spend,actions')}` +
+        `&time_range=${encodeURIComponent(JSON.stringify({ since: since3, until: until3 }))}&limit=500`;
+      let g3 = 0;
+      while (u3 && g3 < 20) {
+        const r3 = await fetch(u3);
+        const d3 = await r3.json();
+        if (d3.error) throw new Error(d3.error.message);
+        (d3.data || []).forEach(row => {
+          stats3d[row.ad_id] = { spend3d: parseFloat(row.spend || 0), purchases3d: getAction(row.actions, 'purchase') };
+        });
+        u3 = d3.paging?.next || null;
+        g3++;
+      }
+    } catch (e) { console.log('3일 인사이트 조회 실패 → r18 미발동:', e.message); stats3d = {}; }
+
     // ── (기록 전용) 목표 ROAS 밴드 & 발동 시점 판정 헬퍼 ───────────
     // 예산 조정 로직과 무관. 기록용 verdict/verdict_reason 생성에만 사용.
     // ROAS는 룰의 check가 쓰는 roas 변수(purchase_roas 기반)와 동일값을 받는다.
@@ -355,7 +386,12 @@ export default async function handler(req, res) {
       const budget = parseInt(ad.adset?.daily_budget || ad.daily_budget || 0);
       const adsetId = ad.adset?.id;
 
-      const adData = { roas, budget, cart, purchases, purchaseValue, spend };
+      // r18 OFF 판정용: 최근 3일(전일까지) 누적. 조회 실패·기록 없음 → 0 → check false(안전 미발동)
+      const s3 = stats3d[ad.id] || {};
+      const spend3d = s3.spend3d || 0;
+      const purchases3d = s3.purchases3d ?? 0;
+
+      const adData = { roas, budget, cart, purchases, purchaseValue, spend, spend3d, purchases3d };
 
       // 카테고리 광고도 규칙 대상 (2026-07-08 스킵 제거 — 근거 없는 초기 구현 잔재.
       // 프론트 수동 실행과 동일 동작. 카테고리 광고의 '재고 기반 품절 OFF' 제외는 프론트에서 원래대로 유지)
@@ -367,14 +403,17 @@ export default async function handler(req, res) {
 
       for (const rule of activeRules) {
         if (!rule.check(adData)) continue;
-        const newBudget = Math.max(rule.calc(adData), 1000);
-        if (newBudget === budget) continue;
-        // 미세 조정 스킵(전역 가드, 2026-07-08): 증감 폭 13% 미만은 성과 영향 없이
-        // 광고세트 수정 이벤트(머신러닝 재학습 위험)만 만들므로 발동 안 함. (최근 2주 기준 전체 조정의 6%만 해당)
-        if (Math.abs(newBudget - budget) / budget < 0.13) continue;
-        // r10·r12·r16 감액 방향 가드: 감액 규칙인데 계산값이 현재 예산 이상(증액/동일)이면 발동 안 함.
-        // (ROAS 100~200% 등에서 구매전환값 50%가 현재 예산보다 커 오히려 증액되던 문제 차단)
-        if ((rule.id === 'r10' || rule.id === 'r12' || rule.id === 'r16') && newBudget >= budget) continue;
+        const isOff = rule.dir === 'off';
+        const newBudget = isOff ? 0 : Math.max(rule.calc(adData), 1000);
+        if (!isOff) {
+          if (newBudget === budget) continue;
+          // 미세 조정 스킵(전역 가드, 2026-07-08): 증감 폭 13% 미만은 성과 영향 없이
+          // 광고세트 수정 이벤트(머신러닝 재학습 위험)만 만들므로 발동 안 함. (최근 2주 기준 전체 조정의 6%만 해당)
+          if (Math.abs(newBudget - budget) / budget < 0.13) continue;
+          // r10·r12·r16 감액 방향 가드: 감액 규칙인데 계산값이 현재 예산 이상(증액/동일)이면 발동 안 함.
+          // (ROAS 100~200% 등에서 구매전환값 50%가 현재 예산보다 커 오히려 증액되던 문제 차단)
+          if ((rule.id === 'r10' || rule.id === 'r12' || rule.id === 'r16') && newBudget >= budget) continue;
+        }
 
         const targetId = adsetId || ad.id;
         // (catch-up 복합 dedup) 그 광고(adset)에 그 룰이 오늘 이미 돌았으면 건너뜀
@@ -382,11 +421,11 @@ export default async function handler(req, res) {
         if (updatedAdsets.has(targetId)) continue;
         updatedAdsets.add(targetId);
 
-        // 예산 변경 실행
-        const updateRes = await fetch(`${META_BASE}/${targetId}?access_token=${META_TOKEN}`, {
+        // 실행: OFF 규칙은 광고 자체를 PAUSED(수동 실행의 품절 OFF와 동일 레벨), 나머지는 광고세트 예산 변경
+        const updateRes = await fetch(`${META_BASE}/${isOff ? ad.id : targetId}?access_token=${META_TOKEN}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ daily_budget: newBudget }),
+          body: JSON.stringify(isOff ? { status: 'PAUSED' } : { daily_budget: newBudget }),
         });
         const updateData = await updateRes.json();
 
