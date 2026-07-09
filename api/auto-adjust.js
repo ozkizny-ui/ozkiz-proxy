@@ -87,8 +87,8 @@ export default async function handler(req, res) {
       calc:  (ad) => 30000,
     },
     {
-      id: 'r3', triggerMin: 8*60+10, dir: 'up',
-      label: '오전 8:10 · ROAS ≥300% → 구매전환값의 100%',
+      id: 'r3', triggerMin: 7*60+10, dir: 'up',
+      label: '오전 7:10 · ROAS ≥300% → 구매전환값의 100%',
       check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
       calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
     },
