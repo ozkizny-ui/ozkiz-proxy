@@ -30,13 +30,13 @@ export default async function handler(req, res) {
   // 스케줄러를 외부(Vercel Cron 등)로 옮기므로, 잘못된 호출·키 유출 시에도
   // 운영시간 밖에선 어떤 룰도 안 돌도록 코드 레벨에서 방어.
   // 모든 룰의 triggerMin(08:00~21:00)을 포함하고, 따라잡기 여유로 21:30까지 허용.
-  const OPEN_MIN = 8 * 60;        // 08:00
+  const OPEN_MIN = 7 * 60;        // 07:00 (2026-07-09: r2 오전 7시 증액을 위해 08:00→07:00 확장. 07~08시엔 r2만 발동 시각 도달)
   const CLOSE_MIN = 21 * 60 + 30; // 21:30
   // 심야 브레이크 슬롯 (2026-07-09): r19(01:00)·r20(04:00) 전용 — 새벽 과소진 캡.
   // 슬롯 = 발동시각 + 30분 주기 호출 여유. 이 창 밖 심야는 기존대로 전면 차단.
   // 낮 규칙들은 triggerMin(08:00+)이 미래라 심야 슬롯에서 발동 불가, 심야 규칙들은
   // catch-up 창(150분)이 지나 낮에 발동 불가 — 슬롯과 창 계산만으로 상호 격리됨.
-  const NIGHT_SLOTS = [[1 * 60, 2 * 60 + 30], [4 * 60, 5 * 60 + 30]]; // 01:00~02:30, 04:00~05:30
+  const NIGHT_SLOTS = [[2 * 60, 3 * 60 + 30], [4 * 60, 5 * 60 + 30]]; // 02:00~03:30, 04:00~05:30
   const inNightSlot = NIGHT_SLOTS.some(([a, b]) => nowMin >= a && nowMin <= b);
   if ((nowMin < OPEN_MIN || nowMin > CLOSE_MIN) && !inNightSlot) {
     return res.status(200).json({
@@ -59,18 +59,20 @@ export default async function handler(req, res) {
     },
     {
       // 심야 브레이크 1차 (2026-07-09): 저녁 수동 대폭 증액 → 새벽 과소진 사고 방지 (7/8 사례: 예산 2.1배 증액 후 새벽 62만 소진·ROAS 80%).
-      // 방향 가드 내장: 계산값(구매전환값×0.6, 최소 1만)이 현재 예산보다 작을 때만 발동(트림 전용).
-      id: 'r19', triggerMin: 1*60, dir: 'dn',
-      label: '새벽 1:00 · 오늘 소진 ≥₩30,000 + ROAS ≤100% → 구매전환값의 60% (최소 ₩10,000)',
-      check: (ad) => ad.spend >= 30000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
-      calc:  (ad) => Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+      // 예산 ≥20만 게이트 = 대형 예산만 대상(소형은 손실 상한이 작음). 소진 게이트 4만 = 정상 새벽 페이스(예산의 ~13%)는 통과, 폭주만 포착.
+      // 컷 = 구매전환값의 100% → 죽이는 게 아니라 "번 만큼의 페이스"로 제한. 방향 가드 내장(트림 전용).
+      id: 'r19', triggerMin: 2*60, dir: 'dn',
+      label: '새벽 2:00 · 예산 ≥₩200,000 + 오늘 소진 ≥₩40,000 + ROAS ≤100% → 구매전환값의 100% (최소 ₩10,000)',
+      check: (ad) => ad.budget >= 200000 && ad.spend >= 40000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue / 1000) * 1000, 10000),
+      calc:  (ad) => Math.max(Math.round(ad.purchaseValue / 1000) * 1000, 10000),
     },
     {
-      // 심야 브레이크 2차: 1시에 놓친(또는 이후 폭주한) 새벽 과소진 재점검
+      // 심야 브레이크 2차: 2시에 놓친(ROAS >100%였거나 이후 폭주) 재점검. 소진 게이트 6만 = 4시 정상 페이스(예산의 ~17%) 초과분만.
+      // ROAS ≥200% 제외 = 구매 1건이 고액이라 명백히 벌고 있는 소재 보호(표본부족 오폭 방지).
       id: 'r20', triggerMin: 4*60, dir: 'dn',
-      label: '새벽 4:00 · 오늘 소진 ≥₩50,000 + ROAS ≤100% → 구매전환값의 60% (최소 ₩10,000)',
-      check: (ad) => ad.spend >= 50000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
-      calc:  (ad) => Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+      label: '새벽 4:00 · 예산 ≥₩200,000 + 오늘 소진 ≥₩60,000 + 구매 2건 미만 → 기존 예산의 50% (ROAS ≥200% 제외)',
+      check: (ad) => ad.budget >= 200000 && ad.spend >= 60000 && ad.purchases < 2 && ad.roas < 200,
+      calc:  (ad) => Math.round(ad.budget * 0.5 / 1000) * 1000,
     },
     {
       id: 'r1', triggerMin: 8*60, dir: 'dn',
@@ -79,8 +81,8 @@ export default async function handler(req, res) {
       calc:  (ad) => ad.budget > 20000 ? 20000 : ad.budget,
     },
     {
-      id: 'r2', triggerMin: 8*60, dir: 'up',
-      label: '오전 8:00 · 장바구니 ≥5 → ₩30,000',
+      id: 'r2', triggerMin: 7*60, dir: 'up',
+      label: '오전 7:00 · 장바구니 ≥5 → ₩30,000',
       check: (ad) => ad.cart >= 5 && ad.budget < 30000 && ad.roas <= 200,
       calc:  (ad) => 30000,
     },
