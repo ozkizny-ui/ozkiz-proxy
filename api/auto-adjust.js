@@ -32,7 +32,13 @@ export default async function handler(req, res) {
   // 모든 룰의 triggerMin(08:00~21:00)을 포함하고, 따라잡기 여유로 21:30까지 허용.
   const OPEN_MIN = 8 * 60;        // 08:00
   const CLOSE_MIN = 21 * 60 + 30; // 21:30
-  if (nowMin < OPEN_MIN || nowMin > CLOSE_MIN) {
+  // 심야 브레이크 슬롯 (2026-07-09): r19(01:00)·r20(04:00) 전용 — 새벽 과소진 캡.
+  // 슬롯 = 발동시각 + 30분 주기 호출 여유. 이 창 밖 심야는 기존대로 전면 차단.
+  // 낮 규칙들은 triggerMin(08:00+)이 미래라 심야 슬롯에서 발동 불가, 심야 규칙들은
+  // catch-up 창(150분)이 지나 낮에 발동 불가 — 슬롯과 창 계산만으로 상호 격리됨.
+  const NIGHT_SLOTS = [[1 * 60, 2 * 60 + 30], [4 * 60, 5 * 60 + 30]]; // 01:00~02:30, 04:00~05:30
+  const inNightSlot = NIGHT_SLOTS.some(([a, b]) => nowMin >= a && nowMin <= b);
+  if ((nowMin < OPEN_MIN || nowMin > CLOSE_MIN) && !inNightSlot) {
     return res.status(200).json({
       message: `운영시간 외 미발동 (KST ${timeLabel})`,
       nowMin,
@@ -50,6 +56,21 @@ export default async function handler(req, res) {
       // ad.purchases === 0: 오늘 아침 막 구매가 발생한 광고는 살림 (3일 창엔 오늘이 빠지므로 별도 확인)
       check: (ad) => ad.spend3d >= 25000 && ad.purchases3d === 0 && ad.purchases === 0 && ad.budget < 20000,
       calc:  () => 0,
+    },
+    {
+      // 심야 브레이크 1차 (2026-07-09): 저녁 수동 대폭 증액 → 새벽 과소진 사고 방지 (7/8 사례: 예산 2.1배 증액 후 새벽 62만 소진·ROAS 80%).
+      // 방향 가드 내장: 계산값(구매전환값×0.6, 최소 1만)이 현재 예산보다 작을 때만 발동(트림 전용).
+      id: 'r19', triggerMin: 1*60, dir: 'dn',
+      label: '새벽 1:00 · 오늘 소진 ≥₩30,000 + ROAS ≤100% → 구매전환값의 60% (최소 ₩10,000)',
+      check: (ad) => ad.spend >= 30000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+      calc:  (ad) => Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+    },
+    {
+      // 심야 브레이크 2차: 1시에 놓친(또는 이후 폭주한) 새벽 과소진 재점검
+      id: 'r20', triggerMin: 4*60, dir: 'dn',
+      label: '새벽 4:00 · 오늘 소진 ≥₩50,000 + ROAS ≤100% → 구매전환값의 60% (최소 ₩10,000)',
+      check: (ad) => ad.spend >= 50000 && ad.roas <= 100 && ad.budget > Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
+      calc:  (ad) => Math.max(Math.round(ad.purchaseValue * 0.6 / 1000) * 1000, 10000),
     },
     {
       id: 'r1', triggerMin: 8*60, dir: 'dn',
