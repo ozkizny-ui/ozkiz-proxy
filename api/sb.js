@@ -31,7 +31,7 @@ const ALLOW = {
   sera:            { read: 'code,name,views,orders,opv,click_value,updated_at', replace: true },
   product_url:     { read: 'ez_name,url,product_no',          upsert: 'ez_name' }, // PK=ez_name
   creative_status: { read: 'key,status',                      upsert: 'key'     }, // 충돌키=key
-  budget_rules:    { upsert: 'id' },                                               // 규칙편집(5-bis 통합). read 불필요(프론트는 localStorage). auto-adjust는 service_role 직접이라 무관
+  budget_rules:    { read: 'id,trigger_min,disabled', upsert: 'id' },              // 규칙 오버라이드(시각/on-off). read: 오버라이드 진단·표시용
   budget_rule_edits: { read: 'created_at,editor,rule_id,field,before_val,after_val,memo', upsert: 'id' }, // 규칙편집 감사로그(append). id auto-gen이라 upsert=insert
   budget_rule_logs:  { read: 'executed_at,rule_id,rule_label,ad_name,adset_id,old_budget,new_budget,success,roas_at_trigger,verdict,spend_at_trigger,value_at_trigger', upsert: 'id' }, // 실행 로그: 자동(auto-adjust, service_role 직접) + 수동(rule_id='manual_*'). anon 읽기가 RLS에 막혀 read도 게이트웨이로. roas/verdict는 예산규칙 분석 탭용
 };
