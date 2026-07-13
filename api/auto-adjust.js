@@ -107,6 +107,15 @@ export default async function handler(req, res) {
       calc:  () => 10000,
     },
     {
+      // 오전 대형 폭주 브레이크 (2026-07-14): 아침부터 많이 태우는데 구매전환값 0인 중대형 광고는
+      // 오후 2:50 r7c(1만 캡)까지 무방비였음 (ROAS 0%라 r7/r7b의 roas>0 조건에도 안 걸림).
+      // -50% 소프트 감액 → 이후에도 전환 0이면 r7c가 1만으로 최종 캡하는 2단 구조. 발동 빈도 ~1건/2일(외과수술형).
+      id: 'r25', triggerMin: 9*60, dir: 'dn',
+      label: '오전 9:00 · 오늘 소진 ≥₩40,000 + 구매전환값 0 → 기존 예산의 50%',
+      check: (ad) => ad.spend >= 40000 && ad.purchaseValue === 0,
+      calc:  (ad) => Math.round(ad.budget * 0.5 / 1000) * 1000,
+    },
+    {
       id: 'r1', triggerMin: 8*60, dir: 'dn',
       label: '오전 8:00 · 장바구니 ≤2 + ROAS ≤150% → ₩20,000',
       check: (ad) => ad.cart <= 2 && ad.roas <= 150 && ad.roas > 0,
