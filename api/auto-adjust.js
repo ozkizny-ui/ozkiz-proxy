@@ -58,6 +58,21 @@ export default async function handler(req, res) {
       calc:  () => 0,
     },
     {
+      // r18의 예산 무관판 (2026-07-13): r18은 예산 <2만 보호 가드가 있어 대형 예산의 3일 실패를 못 끔 → 30분 뒤 예산 무관으로 재점검
+      id: 'r23', triggerMin: 8*60+30, dir: 'off',
+      label: '오전 8:30 · 최근 3일(전일까지) 소진 ≥₩25,000 + 구매 0 → 광고 OFF (예산 무관)',
+      check: (ad) => ad.spend3d >= 25000 && ad.purchases3d === 0 && ad.purchases === 0,
+      calc:  () => 0,
+    },
+    {
+      // 슬로우번 좀비 청소 (2026-07-13): 소액 예산으로 천천히 타서 3일 게이트를 영원히 못 넘는 광고를
+      // 누적 7일 기준으로 정리 (예: 예산 1,500~2,000원짜리가 구매 0인 채 주당 1~3만원씩 새던 문제)
+      id: 'r24', triggerMin: 8*60+40, dir: 'off',
+      label: '오전 8:40 · 최근 7일(전일까지) 소진 ≥₩20,000 + 구매 2건 미만 → 광고 OFF',
+      check: (ad) => ad.spend7d >= 20000 && ad.purchases7d < 2 && ad.purchases === 0,
+      calc:  () => 0,
+    },
+    {
       // 심야 브레이크 1차 (2026-07-09): 저녁 수동 대폭 증액 → 새벽 과소진 사고 방지 (7/8 사례: 예산 2.1배 증액 후 새벽 62만 소진·ROAS 80%).
       // 예산 ≥20만 게이트 = 대형 예산만 대상(소형은 손실 상한이 작음). 소진 게이트 4만 = 정상 새벽 페이스(예산의 ~13%)는 통과, 폭주만 포착.
       // 컷 = 구매전환값의 100% → 죽이는 게 아니라 "번 만큼의 페이스"로 제한. 방향 가드 내장(트림 전용).
@@ -406,6 +421,27 @@ export default async function handler(req, res) {
       }
     } catch (e) { console.log('어제 인사이트 조회 실패 → r21·r22 미발동:', e.message); stats1d = {}; }
 
+    // ── r24 판정용: 최근 7일(전일까지) 광고별 누적 소진·구매 ──
+    // 별도 호출 + 실패 격리: 실패 시 stats7d={} → spend7d=0 → r24만 미발동, 다른 규칙 무영향.
+    const since7 = new Date(kstNow.getTime() - 7 * 86400000).toISOString().split('T')[0];
+    let stats7d = {};
+    try {
+      let u7 = `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
+        `&level=ad&fields=${encodeURIComponent('ad_id,spend,actions')}` +
+        `&time_range=${encodeURIComponent(JSON.stringify({ since: since7, until: until3 }))}&limit=500`;
+      let g7 = 0;
+      while (u7 && g7 < 20) {
+        const r7r = await fetch(u7);
+        const d7 = await r7r.json();
+        if (d7.error) throw new Error(d7.error.message);
+        (d7.data || []).forEach(row => {
+          stats7d[row.ad_id] = { spend: parseFloat(row.spend || 0), purchases: getAction(row.actions, 'purchase') };
+        });
+        u7 = d7.paging?.next || null;
+        g7++;
+      }
+    } catch (e) { console.log('7일 인사이트 조회 실패 → r24 미발동:', e.message); stats7d = {}; }
+
     // ── (기록 전용) 목표 ROAS 밴드 & 발동 시점 판정 헬퍼 ───────────
     // 예산 조정 로직과 무관. 기록용 verdict/verdict_reason 생성에만 사용.
     // ROAS는 룰의 check가 쓰는 roas 변수(purchase_roas 기반)와 동일값을 받는다.
@@ -463,8 +499,12 @@ export default async function handler(req, res) {
       const s1 = stats1d[ad.id] || {};
       const spendY = s1.spend || 0;
       const pvY = s1.pv ?? 0;
+      // r24 판정용: 최근 7일(전일까지) 누적
+      const s7 = stats7d[ad.id] || {};
+      const spend7d = s7.spend || 0;
+      const purchases7d = s7.purchases ?? 0;
 
-      const adData = { roas, budget, cart, purchases, purchaseValue, spend, spend3d, purchases3d, spendY, pvY };
+      const adData = { roas, budget, cart, purchases, purchaseValue, spend, spend3d, purchases3d, spendY, pvY, spend7d, purchases7d };
 
       // 카테고리 광고도 규칙 대상 (2026-07-08 스킵 제거 — 근거 없는 초기 구현 잔재.
       // 프론트 수동 실행과 동일 동작. 카테고리 광고의 '재고 기반 품절 OFF' 제외는 프론트에서 원래대로 유지)
