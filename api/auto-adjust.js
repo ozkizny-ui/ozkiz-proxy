@@ -75,6 +75,23 @@ export default async function handler(req, res) {
       calc:  (ad) => Math.round(ad.budget * 0.5 / 1000) * 1000,
     },
     {
+      // 어제 실패 광고의 아침 풀예산 차단 (2026-07-13): 오전 저효율 소진(일 ~25.6만) 선제 회수.
+      // 어제 데이터(stats1d) 조회 실패 시 spendY=0 → 미발동(안전). 방향 가드 내장(트림 전용).
+      // 오늘 성과가 좋아지면 낮 증액 규칙(9:50~)이 되올리는 자기복구 경로 있음.
+      id: 'r21', triggerMin: 7*60+30, dir: 'dn',
+      label: '오전 7:30 · 어제 ROAS ≤140% + 어제 소진 ≥₩30,000 → 어제 구매전환값의 40% (최소 ₩10,000)',
+      check: (ad) => ad.spendY >= 30000 && ad.pvY <= ad.spendY * 1.4 && ad.budget > Math.max(Math.round(ad.pvY * 0.4 / 1000) * 1000, 10000),
+      calc:  (ad) => Math.max(Math.round(ad.pvY * 0.4 / 1000) * 1000, 10000),
+    },
+    {
+      // 좀비 조기 처리: 어제도 전환 0(소진은 있었음)인데 오늘도 전환 없이 태우면 r7c(14:50)보다 5시간 먼저 캡.
+      // 어제 소진 조건 = 어제 실제로 돌았던 광고만 (오늘 켠 신규 광고의 학습 보호)
+      id: 'r22', triggerMin: 9*60+30, dir: 'dn',
+      label: '오전 9:30 · 어제·오늘 구매전환값 0 (어제 소진 ≥₩5,000) + 오늘 소진 ≥₩5,000 → ₩10,000',
+      check: (ad) => ad.pvY === 0 && ad.spendY >= 5000 && ad.purchaseValue === 0 && ad.spend >= 5000 && ad.budget > 10000,
+      calc:  () => 10000,
+    },
+    {
       id: 'r1', triggerMin: 8*60, dir: 'dn',
       label: '오전 8:00 · 장바구니 ≤2 + ROAS ≤150% → ₩20,000',
       check: (ad) => ad.cart <= 2 && ad.roas <= 150 && ad.roas > 0,
@@ -88,8 +105,9 @@ export default async function handler(req, res) {
     },
     {
       id: 'r3', triggerMin: 7*60+10, dir: 'up',
-      label: '오전 7:10 · ROAS ≥300% → 구매전환값의 100%',
-      check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+      label: '오전 7:10 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 100%',
+      // 구매 ≥2 추가(2026-07-13): 구매 1건 스파이크에 최대 30배 증액되던 표본부족 증액 차단
+      check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
       calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
     },
     {
@@ -118,8 +136,9 @@ export default async function handler(req, res) {
     },
     {
       id: 'r5', triggerMin: 10*60, dir: 'up',
-      label: '오전 10:00 · 구매 1건 + ROAS ≥300% → 구매전환값의 100%',
-      check: (ad) => ad.purchases >= 1 && ad.purchases < 2 && ad.roas >= 300 && ad.purchaseValue > 0,
+      label: '오전 10:00 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 100%',
+      // 구매 1건 → ≥2로 변경(2026-07-13): 표본부족 증액 50건 전량 차단. r3(7:10)의 10시 2차 기회 역할
+      check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
     },
     {
@@ -148,8 +167,8 @@ export default async function handler(req, res) {
     },
     {
       id: 'r8', triggerMin: 12*60+10, dir: 'up',
-      label: '오후 12:10 · ROAS ≥300% → 구매전환값의 120%',
-      check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+      label: '오후 12:10 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 120%',
+      check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
       calc:  (ad) => Math.round(ad.purchaseValue * 1.2 / 1000) * 1000,
     },
     {
@@ -166,9 +185,9 @@ export default async function handler(req, res) {
     },
     {
       id: 'r11', triggerMin: 15*60+10, dir: 'up',
-      label: '오후 3:10 · ROAS ≥300% → 구매전환값의 100%',
-      check: (ad) => ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
-      calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
+      label: '오후 3:10 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 50%',
+      check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
+      calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
     },
     {
       id: 'r12', triggerMin: 18*60, dir: 'dn',
@@ -184,10 +203,11 @@ export default async function handler(req, res) {
     },
     {
       id: 'r14', triggerMin: 18*60+5, dir: 'up',
-      label: '오후 6:05 · ROAS ≥400% → 구매전환값의 60%',
+      label: '오후 6:05 · ROAS ≥400% → 구매전환값의 70%',
       // budget≤pv 가드 제거: 허수 예산이 매출액보다 큰 과지출 상태(가장 위험)에서도 발동해 예산을 조이도록.
+      // ×0.6 → ×0.7 완화(2026-07-13): 고효율(400%↑) 소진을 덜 죽여 블렌디드 ROAS 방어 (기회손실 32건/2주)
       check: (ad) => ad.roas >= 400 && ad.purchaseValue > 0,
-      calc:  (ad) => Math.round(ad.purchaseValue * 0.6 / 1000) * 1000,
+      calc:  (ad) => Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
     },
     {
       id: 'r15', triggerMin: 18*60+10, dir: 'up',
@@ -363,6 +383,29 @@ export default async function handler(req, res) {
       }
     } catch (e) { console.log('3일 인사이트 조회 실패 → r18 미발동:', e.message); stats3d = {}; }
 
+    // ── r21·r22 판정용: 어제 광고별 소진·구매전환값 ──
+    // 별도 호출 + 실패 격리: 실패 시 stats1d={} → spendY=0 → r21·r22만 미발동, 다른 규칙 무영향.
+    let stats1d = {};
+    try {
+      let u1 = `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
+        `&level=ad&fields=${encodeURIComponent('ad_id,spend,actions,action_values')}` +
+        `&time_range=${encodeURIComponent(JSON.stringify({ since: until3, until: until3 }))}&limit=500`;
+      let g1 = 0;
+      while (u1 && g1 < 20) {
+        const r1r = await fetch(u1);
+        const d1 = await r1r.json();
+        if (d1.error) throw new Error(d1.error.message);
+        (d1.data || []).forEach(row => {
+          stats1d[row.ad_id] = {
+            spend: parseFloat(row.spend || 0),
+            pv: getAction(row.action_values, 'purchase'),
+          };
+        });
+        u1 = d1.paging?.next || null;
+        g1++;
+      }
+    } catch (e) { console.log('어제 인사이트 조회 실패 → r21·r22 미발동:', e.message); stats1d = {}; }
+
     // ── (기록 전용) 목표 ROAS 밴드 & 발동 시점 판정 헬퍼 ───────────
     // 예산 조정 로직과 무관. 기록용 verdict/verdict_reason 생성에만 사용.
     // ROAS는 룰의 check가 쓰는 roas 변수(purchase_roas 기반)와 동일값을 받는다.
@@ -416,8 +459,12 @@ export default async function handler(req, res) {
       const s3 = stats3d[ad.id] || {};
       const spend3d = s3.spend3d || 0;
       const purchases3d = s3.purchases3d ?? 0;
+      // r21·r22 판정용: 어제 소진·구매전환값. 조회 실패·어제 미집행 → spendY 0 → check false(안전 미발동)
+      const s1 = stats1d[ad.id] || {};
+      const spendY = s1.spend || 0;
+      const pvY = s1.pv ?? 0;
 
-      const adData = { roas, budget, cart, purchases, purchaseValue, spend, spend3d, purchases3d };
+      const adData = { roas, budget, cart, purchases, purchaseValue, spend, spend3d, purchases3d, spendY, pvY };
 
       // 카테고리 광고도 규칙 대상 (2026-07-08 스킵 제거 — 근거 없는 초기 구현 잔재.
       // 프론트 수동 실행과 동일 동작. 카테고리 광고의 '재고 기반 품절 OFF' 제외는 프론트에서 원래대로 유지)
