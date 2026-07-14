@@ -162,7 +162,8 @@ export default async function handler(req, res) {
       id: 'r5', triggerMin: 10*60, dir: 'up',
       label: '오전 10:00 · 구매 ≥2 + ROAS ≥300% → 구매전환값의 100%',
       // 구매 1건 → ≥2로 변경(2026-07-13): 표본부족 증액 50건 전량 차단. r3(7:10)의 10시 2차 기회 역할
-      check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0,
+      // budget ≤ pv 가드 추가(2026-07-14): 증액 전용 — 9:50 r4a/b/c가 올린 예산(pv 초과)을 pv로 되돌려 깎던 충돌 차단
+      check: (ad) => ad.purchases >= 2 && ad.roas >= 300 && ad.purchaseValue > 0 && ad.budget <= ad.purchaseValue,
       calc:  (ad) => Math.round(ad.purchaseValue / 1000) * 1000,
     },
     {
@@ -525,6 +526,9 @@ export default async function handler(req, res) {
 
       for (const rule of activeRules) {
         if (!rule.check(adData)) continue;
+        // r15는 r14가 오늘 이 광고에 이미 발동했으면 스킵 (2026-07-14): ROAS ≥400% 광고가
+        // 18:05 r14(pv 70%) → 18:10 r15(pv 50%)로 5분 간격 이중 감액되던 충돌 차단 (2주 77건 실증)
+        if (rule.id === 'r15' && executedToday.has(`r14__${adsetId || ad.id}`)) continue;
         const isOff = rule.dir === 'off';
         const newBudget = isOff ? 0 : Math.max(rule.calc(adData), 1000);
         if (!isOff) {
