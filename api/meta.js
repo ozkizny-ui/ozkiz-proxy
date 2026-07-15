@@ -569,7 +569,8 @@ export default async function handler(req, res) {
         `&fields=id,name,status,objective&limit=50`
       );
       const data = await r.json();
-      if (data.error) return res.status(400).json({ error: data.error.message });
+      // 에러 시 전체 에러 객체 반환 (2026-07-16: 'API access blocked' 차단 사유 코드 진단용 — code/subcode/error_user_msg 포함)
+      if (data.error) return res.status(400).json({ error: data.error.message, error_detail: data.error });
       return res.status(200).json({ campaigns: data.data || [] });
     }
 
