@@ -227,11 +227,20 @@ export default async function handler(req, res) {
       calc:  (ad) => ad.budget > 10000 ? 10000 : ad.budget,
     },
     {
+      // 데드존(200~300%) 진공지대 관리 (2026-07-14): 감액(≤200%)·증액(≥300%) 사이에 방치되던 구간에
+      // '전환값의 70% 페이스'를 세팅 — 대부분 증액/유지 방향으로 작동해 오후에 깎여 멈춘 200%대 광고를 되살림.
+      // r14형(budget≤pv 가드 없음): 과지출 상태면 조임으로도 작동. 구매 ≥2 = 표본 가드(17시 대상의 41%가 구매<2로 걸러짐)
+      id: 'r26', triggerMin: 17*60, dir: 'up',
+      label: '오후 5:00 · 구매 ≥2 + ROAS ≥200% → 구매전환값의 70%',
+      check: (ad) => ad.purchases >= 2 && ad.roas >= 200 && ad.purchaseValue > 0,
+      calc:  (ad) => Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
+    },
+    {
       id: 'r14', triggerMin: 18*60+5, dir: 'up',
-      label: '오후 6:05 · ROAS ≥400% → 구매전환값의 70%',
+      label: '오후 6:05 · ROAS ≥350% → 구매전환값의 70%',
       // budget≤pv 가드 제거: 허수 예산이 매출액보다 큰 과지출 상태(가장 위험)에서도 발동해 예산을 조이도록.
-      // ×0.6 → ×0.7 완화(2026-07-13): 고효율(400%↑) 소진을 덜 죽여 블렌디드 ROAS 방어 (기회손실 32건/2주)
-      check: (ad) => ad.roas >= 400 && ad.purchaseValue > 0,
+      // ×0.6 → ×0.7 완화(2026-07-13), 문턱 400 → 350(2026-07-14): 고효율 페이스 관리 범위 확대
+      check: (ad) => ad.roas >= 350 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.7 / 1000) * 1000,
     },
     {
@@ -526,9 +535,10 @@ export default async function handler(req, res) {
 
       for (const rule of activeRules) {
         if (!rule.check(adData)) continue;
-        // r15는 r14가 오늘 이 광고에 이미 발동했으면 스킵 (2026-07-14): ROAS ≥400% 광고가
-        // 18:05 r14(pv 70%) → 18:10 r15(pv 50%)로 5분 간격 이중 감액되던 충돌 차단 (2주 77건 실증)
-        if (rule.id === 'r15' && executedToday.has(`r14__${adsetId || ad.id}`)) continue;
+        // r15는 r14 또는 r26이 오늘 이 광고에 이미 발동했으면 스킵 (2026-07-14): 17:00 r26(pv 70%)·
+        // 18:05 r14(pv 70%)가 세팅한 페이스를 18:10 r15(pv 50%)가 5분~1시간 만에 재차 깎던 이중 감액 차단
+        // (r14↔r15 케이스만 2주 77건 실증). r15의 실제 담당 = 저녁에야 300%+가 된 광고.
+        if (rule.id === 'r15' && (executedToday.has(`r14__${adsetId || ad.id}`) || executedToday.has(`r26__${adsetId || ad.id}`))) continue;
         const isOff = rule.dir === 'off';
         const newBudget = isOff ? 0 : Math.max(rule.calc(adData), 1000);
         if (!isOff) {
