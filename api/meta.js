@@ -8,6 +8,7 @@ const META_AUTH_ENABLED = process.env.META_AUTH_ENABLED === 'true';
 const META_READ_ACTIONS = new Set([
   'get_ads', 'get_adset', 'get_ad', 'get_creative', 'get_adset_insights', 'get_daily_insights',
   'get_campaigns', 'get_product_sets', 'vurl_test', 'drive_test', 'pa_resolve_test', 'get_canvas',
+  'app_info',
 ]);
 
 export default async function handler(req, res) {
@@ -563,6 +564,14 @@ export default async function handler(req, res) {
     }
 
     // ── 신규: 캠페인 목록 조회 ────────────────────────────────────
+    // ── [진단] 토큰이 속한 개발자 앱 확인 (2026-07-16: API access blocked 앱 식별용) ──
+    if (action === "app_info") {
+      const r = await fetch(`${META_BASE}/app?access_token=${META_TOKEN}&fields=id,name,link`);
+      const data = await r.json();
+      if (data.error) return res.status(400).json({ error: data.error.message, error_detail: data.error });
+      return res.status(200).json({ app: data });
+    }
+
     if (action === "get_campaigns") {
       const r = await fetch(
         `${META_BASE}/${AD_ACCOUNT}/campaigns?access_token=${META_TOKEN}` +
