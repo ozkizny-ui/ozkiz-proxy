@@ -397,10 +397,14 @@ export default async function handler(req, res) {
 
     // ── r18 OFF 판정용: 최근 3일(전일까지) 광고별 누적 소진·구매 ──
     // 별도 호출 + 실패 격리: 이 조회가 실패해도 stats3d={} → r18만 미발동, 다른 규칙 무영향.
+    // 과거 데이터(어제·3일·7일)는 오전 규칙(r18·r21~r24, 발동창 최대 12:00)에서만 사용 →
+    // 정오 이후 호출에선 조회 생략 (2026-07-16: API 호출 ~60% 감량 — Meta 자동 차단 재발 위험 완화.
+    // 생략 시 spend3d/spendY/spend7d=0 → 해당 규칙 check false인데, 어차피 발동창도 지난 시각이라 이중 안전)
+    const NEED_HISTORY = nowMin <= 12 * 60;
     const since3 = new Date(kstNow.getTime() - 3 * 86400000).toISOString().split('T')[0];
     const until3 = new Date(kstNow.getTime() - 1 * 86400000).toISOString().split('T')[0];
     let stats3d = {};
-    try {
+    if (NEED_HISTORY) try {
       let u3 = `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
         `&level=ad&fields=${encodeURIComponent('ad_id,spend,actions')}` +
         `&time_range=${encodeURIComponent(JSON.stringify({ since: since3, until: until3 }))}&limit=500`;
@@ -420,7 +424,7 @@ export default async function handler(req, res) {
     // ── r21·r22 판정용: 어제 광고별 소진·구매전환값 ──
     // 별도 호출 + 실패 격리: 실패 시 stats1d={} → spendY=0 → r21·r22만 미발동, 다른 규칙 무영향.
     let stats1d = {};
-    try {
+    if (NEED_HISTORY) try {
       let u1 = `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
         `&level=ad&fields=${encodeURIComponent('ad_id,spend,actions,action_values')}` +
         `&time_range=${encodeURIComponent(JSON.stringify({ since: until3, until: until3 }))}&limit=500`;
@@ -444,7 +448,7 @@ export default async function handler(req, res) {
     // 별도 호출 + 실패 격리: 실패 시 stats7d={} → spend7d=0 → r24만 미발동, 다른 규칙 무영향.
     const since7 = new Date(kstNow.getTime() - 7 * 86400000).toISOString().split('T')[0];
     let stats7d = {};
-    try {
+    if (NEED_HISTORY) try {
       let u7 = `${META_BASE}/${AD_ACCOUNT}/insights?access_token=${META_TOKEN}` +
         `&level=ad&fields=${encodeURIComponent('ad_id,spend,actions')}` +
         `&time_range=${encodeURIComponent(JSON.stringify({ since: since7, until: until3 }))}&limit=500`;
