@@ -7,7 +7,7 @@
 //   - 검색어 성과: 대용량 보고서(StatReport) — statreport_test 확정 후 연결(TODO).
 import crypto from "node:crypto";
 import { verifyBearer } from "../lib/auth.js";
-import { runCollect, readCollectStatus } from "../lib/naver-collect-run.js";
+import { runCollect, readCollectStatus, logBidChanges, readBidChanges } from "../lib/naver-collect-run.js";
 
 // 수집(action=collect)은 네이버 read를 다수 순회하므로 기본 10초를 초과 → 60초로. (다른 액션엔 상한만 상향, 무해)
 export const config = { maxDuration: 60 };
@@ -17,6 +17,7 @@ const READ_ACTIONS = new Set([
   "get_campaigns", "get_adgroups", "get_keywords", "get_ads",
   "estimate", "stats", "get_restricted_keywords", "get_ad_extensions",
   "report_create", "report_status", "report_download", "report_delete",
+  "get_bid_changes",
 ]);
 // 대용량 보고서 reportTp (Phase0 확정): EXPKEYWORD=검색어(파워링크 전용), AD=소재별 일일성과, AD_DETAIL=키워드·소재 상세.
 // 쇼핑 검색어는 API 미제공 → 제외검색어 제안은 수동 CSV 업로드 경로.
@@ -148,6 +149,12 @@ export default async function handler(req, res) {
       case "get_ad_extensions":
         // 확장소재 조회. ownerId=광고그룹 or 캠페인 id
         return relay(res, await nv("GET", "/ncc/ad-extensions", { rawQuery: q({ ownerId: req.query.ownerId }) }));
+
+      // ── 입찰 변경 이력 (읽기 open / 기록은 게이트) ──
+      case "get_bid_changes":
+        return res.status(200).json(await readBidChanges(process.env, req.query.channel, req.query.limit));
+      case "log_bid_change":
+        return res.status(200).json(await logBidChanges(process.env, body.rows));
       case "add_restricted_keyword": {
         // body: { nccAdgroupId, keyword, type? }  type 기본 KEYWORD_PLUS_RESTRICT (파워링크 확장검색 제외)
         const { nccAdgroupId, keyword } = body;
