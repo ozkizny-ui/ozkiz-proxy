@@ -7,6 +7,10 @@
 //   - 검색어 성과: 대용량 보고서(StatReport) — statreport_test 확정 후 연결(TODO).
 import crypto from "node:crypto";
 import { verifyBearer } from "../lib/auth.js";
+import { runCollect } from "../lib/naver-collect-run.js";
+
+// 수집(action=collect)은 네이버 read를 다수 순회하므로 기본 10초를 초과 → 60초로. (다른 액션엔 상한만 상향, 무해)
+export const config = { maxDuration: 60 };
 
 const NAVER_BASE = "https://api.searchad.naver.com";
 const READ_ACTIONS = new Set([
@@ -41,6 +45,17 @@ export default async function handler(req, res) {
 
   const action = req.query.action;
   const body = req.body && typeof req.body === "object" ? req.body : {};
+
+  // ── 수집 크론(action=collect): 읽기전용 수집 + 알림. 인증 = x-cron-secret(auto-adjust 동일).
+  //    Hobby 함수 12개 제한 때문에 별도 api 파일 대신 여기에 편입. 네이버 쓰기 없음(돈 안 나감).
+  if (action === "collect") {
+    const secret = req.headers["x-cron-secret"] || body.secret;
+    if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    try { return res.status(200).json(await runCollect(process.env)); }
+    catch (e) { return res.status(e.status || 500).json({ error: String(e.message || e) }); }
+  }
 
   // 쓰기(입찰 변경) fail-CLOSED: 항상 write JWT(verifyBearer) 필요. 읽기 allowlist만 open.
   // 돈이 나가는 동작이라 meta.js의 기본-OFF 게이트보다 강하게. SB_JWT_SECRET 없으면 verify=false→차단.
