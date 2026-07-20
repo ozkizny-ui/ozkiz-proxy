@@ -11,7 +11,7 @@ import { verifyBearer } from "../lib/auth.js";
 const NAVER_BASE = "https://api.searchad.naver.com";
 const READ_ACTIONS = new Set([
   "get_campaigns", "get_adgroups", "get_keywords", "get_ads",
-  "estimate", "stats", "get_restricted_keywords",
+  "estimate", "stats", "get_restricted_keywords", "get_ad_extensions",
   "report_create", "report_status", "report_download", "report_delete",
 ]);
 // 대용량 보고서 reportTp (Phase0 확정): EXPKEYWORD=검색어(파워링크 전용), AD=소재별 일일성과, AD_DETAIL=키워드·소재 상세.
@@ -124,6 +124,9 @@ export default async function handler(req, res) {
       // ── 제외키워드(파워링크 키워드확장 제외). 읽기 open, 추가/삭제는 게이트 ──
       case "get_restricted_keywords":
         return relay(res, await nv("GET", `/ncc/adgroups/${req.query.nccAdgroupId}/restricted-keywords`));
+      case "get_ad_extensions":
+        // 확장소재 조회. ownerId=광고그룹 or 캠페인 id
+        return relay(res, await nv("GET", "/ncc/ad-extensions", { rawQuery: q({ ownerId: req.query.ownerId }) }));
       case "add_restricted_keyword": {
         // body: { nccAdgroupId, keyword, type? }  type 기본 KEYWORD_PLUS_RESTRICT (파워링크 확장검색 제외)
         const { nccAdgroupId, keyword } = body;
