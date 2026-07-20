@@ -194,6 +194,19 @@ export default async function handler(req, res) {
         return relay(res, put);
       }
 
+      case "set_keyword_userlock": {
+        // body: { nccKeywordId, nccAdgroupId, userLock:boolean } — 파워링크 키워드 OFF(정지)/ON(노출).
+        const { nccKeywordId, nccAdgroupId, userLock } = body;
+        if (!nccKeywordId || !nccAdgroupId || typeof userLock !== "boolean") {
+          return res.status(400).json({ error: "nccKeywordId, nccAdgroupId required; userLock must be boolean" });
+        }
+        const put = await nv("PUT", `/ncc/keywords/${nccKeywordId}`, {
+          rawQuery: '?fields=["userLock"]', // ⚠️ 키워드는 JSON배열 형식
+          jsonBody: { nccKeywordId, nccAdgroupId, userLock },
+        });
+        return relay(res, put);
+      }
+
       default:
         return res.status(400).json({ error: `unknown action: ${action}` });
     }
