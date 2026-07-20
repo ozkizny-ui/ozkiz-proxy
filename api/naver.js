@@ -7,7 +7,7 @@
 //   - 검색어 성과: 대용량 보고서(StatReport) — statreport_test 확정 후 연결(TODO).
 import crypto from "node:crypto";
 import { verifyBearer } from "../lib/auth.js";
-import { runCollect } from "../lib/naver-collect-run.js";
+import { runCollect, readCollectStatus } from "../lib/naver-collect-run.js";
 
 // 수집(action=collect)은 네이버 read를 다수 순회하므로 기본 10초를 초과 → 60초로. (다른 액션엔 상한만 상향, 무해)
 export const config = { maxDuration: 60 };
@@ -54,6 +54,12 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "unauthorized" });
     }
     try { return res.status(200).json(await runCollect(process.env)); }
+    catch (e) { return res.status(e.status || 500).json({ error: String(e.message || e) }); }
+  }
+
+  // ── 수집 현황 조회(action=collect_status): 프론트 '수집·알림 현황' 탭용. 읽기전용(open).
+  if (action === "collect_status") {
+    try { return res.status(200).json(await readCollectStatus(process.env)); }
     catch (e) { return res.status(e.status || 500).json({ error: String(e.message || e) }); }
   }
 
