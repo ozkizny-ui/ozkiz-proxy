@@ -116,6 +116,14 @@ export default async function handler(req, res) {
       calc:  (ad) => Math.round(ad.budget * 0.5 / 1000) * 1000,
     },
     {
+      // 아침 대형 저효율 브레이크 (2026-07-21): 예산 <20만이라 새벽 브레이크(r19·r20) 게이트에 안 걸리는
+      // 광고가 아침까지 5만+ 태우며 ROAS ≤100%인 경우 (최근 4일 시뮬 발동 0건 — 순수 안전망)
+      id: 'r27', triggerMin: 8*60+10, dir: 'dn',
+      label: '오전 8:10 · 오늘 소진 ≥₩50,000 + ROAS ≤100% → 기존 예산의 50%',
+      check: (ad) => ad.spend >= 50000 && ad.roas <= 100,
+      calc:  (ad) => Math.round(ad.budget * 0.5 / 1000) * 1000,
+    },
+    {
       id: 'r1', triggerMin: 8*60, dir: 'dn',
       label: '오전 8:00 · 장바구니 ≤2 + ROAS ≤150% → ₩20,000',
       check: (ad) => ad.cart <= 2 && ad.roas <= 150 && ad.roas > 0,
@@ -543,6 +551,8 @@ export default async function handler(req, res) {
         // 18:05 r14(pv 70%)가 세팅한 페이스를 18:10 r15(pv 50%)가 5분~1시간 만에 재차 깎던 이중 감액 차단
         // (r14↔r15 케이스만 2주 77건 실증). r15의 실제 담당 = 저녁에야 300%+가 된 광고.
         if (rule.id === 'r15' && (executedToday.has(`r14__${adsetId || ad.id}`) || executedToday.has(`r26__${adsetId || ad.id}`))) continue;
+        // r25는 r27(8:10 -50%)이 당일 이미 발동한 광고 스킵 (2026-07-21): 8:10 → 9:00 연속 반토막 방지
+        if (rule.id === 'r25' && executedToday.has(`r27__${adsetId || ad.id}`)) continue;
         const isOff = rule.dir === 'off';
         const newBudget = isOff ? 0 : Math.max(rule.calc(adData), 1000);
         if (!isOff) {
