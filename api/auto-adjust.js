@@ -45,6 +45,18 @@ export default async function handler(req, res) {
     });
   }
 
+  // ── 쉬는날 판정 (2026-07-21): 금·토·일 + 공휴일 ─────────────────
+  // 쉬는날엔 오후·저녁 감액 사다리(r10·r17·r12·r16) 문턱을 200→240%로 확대.
+  // 근거: 쉬는날 오후(12~17시) ROAS 109~152%·저녁(17~22시) 84~132% 붕괴 실측 —
+  // 누적 200~240% 광고도 저녁 붕괴로 종가가 200% 아래로 끝나는 패턴.
+  const KR_HOLIDAYS = [ // 2026 하반기 (2026-07-21 확인: 광복절 8/15+8/17 대체, 추석 9/24~26, 개천절 10/3+10/5 대체, 한글날 10/9, 성탄 12/25)
+    '2026-08-15', '2026-08-17', '2026-09-24', '2026-09-25', '2026-09-26',
+    '2026-10-03', '2026-10-05', '2026-10-09', '2026-12-25',
+  ];
+  const kstDow = kstNow.getUTCDay(); // 0=일 ~ 6=토
+  const IS_REST_DAY = kstDow === 5 || kstDow === 6 || kstDow === 0 || KR_HOLIDAYS.includes(today);
+  const LADDER_MAX = IS_REST_DAY ? 240 : 200;
+
   // ── 예산 규칙 정의 ──────────────────────────────────────────────
   const BUDGET_RULES = [
     {
@@ -212,8 +224,8 @@ export default async function handler(req, res) {
     },
     {
       id: 'r10', triggerMin: 15*60, dir: 'dn',
-      label: '오후 3:00 · ROAS ≤200% → 구매전환값의 50%',
-      check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
+      label: '오후 3:00 · ROAS ≤200%(쉬는날 ≤240%) → 구매전환값의 50%',
+      check: (ad) => ad.roas <= LADDER_MAX && ad.roas > 0 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
     },
     {
@@ -224,8 +236,8 @@ export default async function handler(req, res) {
     },
     {
       id: 'r12', triggerMin: 18*60, dir: 'dn',
-      label: '오후 6:00 · ROAS ≤200% → 구매전환값의 30%',
-      check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
+      label: '오후 6:00 · ROAS ≤200%(쉬는날 ≤240%) → 구매전환값의 30%',
+      check: (ad) => ad.roas <= LADDER_MAX && ad.roas > 0 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.3 / 1000) * 1000,
     },
     {
@@ -260,15 +272,15 @@ export default async function handler(req, res) {
     },
     {
       id: 'r16', triggerMin: 21*60, dir: 'dn',
-      label: '오후 9:00 · ROAS ≤200% → 구매전환값의 50%',
-      check: (ad) => ad.roas <= 200 && ad.roas > 0 && ad.purchaseValue > 0,
+      label: '오후 9:00 · ROAS ≤200%(쉬는날 ≤240%) → 구매전환값의 50%',
+      check: (ad) => ad.roas <= LADDER_MAX && ad.roas > 0 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
     },
     {
       id: 'r17', triggerMin: 16*60, dir: 'dn',
-      label: '오후 4:00 · ROAS 150~200% → 구매전환값의 40%',
+      label: '오후 4:00 · ROAS 150~200%(쉬는날 ~240%) → 구매전환값의 40%',
       // 방향 가드 내장: 계산값(구매전환값×0.4)이 현재 예산보다 작을 때만 발동(트림 전용)
-      check: (ad) => ad.roas >= 150 && ad.roas < 200 && ad.purchaseValue > 0 && ad.budget > Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
+      check: (ad) => ad.roas >= 150 && ad.roas < LADDER_MAX && ad.purchaseValue > 0 && ad.budget > Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.4 / 1000) * 1000,
     },
   ];
