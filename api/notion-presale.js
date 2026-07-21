@@ -46,6 +46,14 @@ export default async function handler(req, res) {
 
       const data = await r.json();
 
+      // 임시 디버그: 속성 이름·타입 확인용
+      if (req.query.debug === 'props' && data.results[0]) {
+        const p0 = data.results[0].properties;
+        return res.status(200).json(Object.fromEntries(
+          Object.entries(p0).map(([k, v]) => [k, { type: v.type, sample: JSON.stringify(v[v.type])?.slice(0, 120) }])
+        ));
+      }
+
       for (const page of data.results) {
         // 상품명: 페이지 title 속성
         const titleProp = page.properties['이름'] || page.properties['Name'] ||
