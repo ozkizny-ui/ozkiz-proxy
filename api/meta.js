@@ -8,7 +8,7 @@ const META_AUTH_ENABLED = process.env.META_AUTH_ENABLED === 'true';
 const META_READ_ACTIONS = new Set([
   'get_ads', 'get_adset', 'get_ad', 'get_creative', 'get_adset_insights', 'get_daily_insights',
   'get_campaigns', 'get_product_sets', 'vurl_test', 'drive_test', 'pa_resolve_test', 'get_canvas',
-  'app_info',
+  'app_info', 'get_activities',
 ]);
 
 export default async function handler(req, res) {
@@ -493,6 +493,30 @@ export default async function handler(req, res) {
       });
 
       return res.status(200).json({ since, until, days, count: adsets.length, server_time_kst, adsets });
+    }
+
+    // ── 계정 변경 이력 (수동/자동 예산·상태 변경 추적) ─────────────
+    // /act_X/activities: 누가(actor_name) 언제(event_time) 무엇을(object_name) 어떻게(extra_data old/new) 바꿨는지.
+    // API로 바꾼 건 actor가 시스템유저(자동조정), 광고관리자에서 사람이 바꾼 건 그 사람 이름으로 찍힘.
+    if (action === "get_activities") {
+      const days = Math.min(Math.max(parseInt(req.query.days || "2", 10) || 2, 1), 14);
+      const kstNowA = new Date(Date.now() + 9 * 3600 * 1000);
+      const sinceA = new Date(kstNowA.getTime() - (days - 1) * 86400000).toISOString().split("T")[0];
+      const fieldsA = "event_time,event_type,translated_event_type,actor_name,object_name,object_type,extra_data";
+      let urlA =
+        `${META_BASE}/${AD_ACCOUNT}/activities?access_token=${META_TOKEN}` +
+        `&fields=${encodeURIComponent(fieldsA)}&since=${sinceA}&limit=500`;
+      const rowsA = [];
+      let guardA = 0;
+      while (urlA && guardA < 20) {
+        const r = await fetch(urlA);
+        const data = await r.json();
+        if (data.error) return res.status(400).json({ error: data.error.message });
+        if (Array.isArray(data.data)) rowsA.push(...data.data);
+        urlA = data.paging?.next || null;
+        guardA++;
+      }
+      return res.status(200).json({ since: sinceA, count: rowsA.length, data: rowsA });
     }
 
     // ── 신규: 계정 일별 블렌디드 ROAS (예산규칙 분석 탭용) ──
