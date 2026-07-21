@@ -46,30 +46,31 @@ export default async function handler(req, res) {
 
       const data = await r.json();
 
-      // 임시 디버그: 속성 이름·타입 확인용
-      if (req.query.debug === 'props' && data.results[0]) {
-        const p0 = data.results[0].properties;
-        return res.status(200).json(Object.fromEntries(
-          Object.entries(p0).map(([k, v]) => [k, { type: v.type, sample: JSON.stringify(v[v.type])?.slice(0, 120) }])
-        ));
-      }
-
       for (const page of data.results) {
+        const props = page.properties;
         // 상품명: 페이지 title 속성
-        const titleProp = page.properties['이름'] || page.properties['Name'] ||
-          Object.values(page.properties).find(p => p.type === 'title');
+        const titleProp = props['제품명'] || props['이름'] || props['Name'] ||
+          Object.values(props).find(p => p.type === 'title');
         const name = titleProp?.title?.[0]?.plain_text?.trim() || '';
 
         // 입고일
-        const arrivalDate = page.properties['입고일']?.date?.start || null;
+        const arrivalDate = props['입고일']?.date?.start || null;
 
         // 진행상태 (optional — 추가 참고용)
-        const statusProp = page.properties['진행상태'];
+        const statusProp = props['진행상태'];
         const status = statusProp?.status?.name || statusProp?.select?.name || '';
 
         if (!name) continue;
 
-        items.push({ name, arrivalDate, status });
+        // 입고예정 표용 확장 필드 (기존 소비자는 name/arrivalDate/status만 사용 — 하위호환)
+        const season = (props['시즌']?.multi_select || []).map(s => s.name).join(', ');
+        const kinds  = (props['제품유형']?.multi_select || []).map(s => s.name).join(', ');
+        const qtyRoll = props['발주수량 합계']?.rollup;
+        const qty = (qtyRoll && qtyRoll.type === 'number' ? qtyRoll.number : null) ?? props['입고수량']?.number ?? null;
+        const category = props['복종']?.select?.name || '';
+        const brand    = props['브랜드']?.select?.name || '';
+
+        items.push({ name, arrivalDate, status, season, kinds, qty, category, brand });
       }
 
       if (!data.has_more) break;
