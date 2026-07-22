@@ -622,6 +622,54 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── 저녁 수동 증액 감시 (2026-07-22, 기록 전용·비침습) ─────────────
+    // 17시 이후 '사람'(ads-automation·Meta 제외)이 광고세트 예산을 +3만 이상 올리면
+    // 조정 이력(budget_rule_logs)에 rule_id='manual_up_watch'로 기록만 남긴다(되돌리지 않음).
+    // 배경: 저녁(17~22시)은 최근 마진 ROAS 84~132% 붕괴 구간인데 대형 수동 증액이 반복 —
+    // 다음날 아침 대화용 근거 축적. dedup: 광고세트당 하루 1회(executedToday 키 공유).
+    // 실패해도 규칙 실행엔 영향 없음(try/catch 격리). 프론트는 manual_* 접두어로 🖐 표시.
+    if (nowMin >= 17 * 60) {
+      try {
+        const watchFields = 'event_time,event_type,actor_name,object_id,object_name,extra_data';
+        let wUrl = `${META_BASE}/${AD_ACCOUNT}/activities?access_token=${META_TOKEN}` +
+          `&fields=${encodeURIComponent(watchFields)}&since=${today}&limit=200`;
+        const evs = [];
+        let wg = 0;
+        while (wUrl && wg < 3) {
+          const wr = await fetch(wUrl);
+          const wd = await wr.json();
+          if (wd.error) throw new Error(wd.error.message);
+          evs.push(...(wd.data || []));
+          wUrl = wd.paging?.next || null;
+          wg++;
+        }
+        const cutoff = new Date(`${today}T17:00:00+09:00`).getTime();
+        for (const ev of evs) {
+          if (ev.event_type !== 'update_ad_set_budget') continue;
+          if (['ads-automation', 'Meta'].includes(ev.actor_name)) continue;
+          if (new Date(ev.event_time).getTime() < cutoff) continue;
+          let o = 0, n = 0;
+          try { const x = JSON.parse(ev.extra_data); o = x.old_value?.old_value || 0; n = x.new_value?.new_value || 0; } catch (e) { continue; }
+          if (!(n > o && n - o >= 30000)) continue; // 대형 증액만(+3만 이상)
+          const wKey = `manual_up_watch__${ev.object_id}`;
+          if (executedToday.has(wKey)) continue;
+          executedToday.add(wKey);
+          const t = new Date(new Date(ev.event_time).getTime() + 9 * 3600 * 1000);
+          const hhmm = `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`;
+          results.push({
+            adName: ev.object_name || '',
+            ruleId: 'manual_up_watch',
+            ruleLabel: `🖐 저녁 수동 증액 감지 · ${ev.actor_name} ${hhmm} (기록 전용 — 되돌리지 않음)`,
+            oldBudget: o,
+            newBudget: n,
+            success: true,
+            watch: true,
+            adsetId: ev.object_id || null,
+          });
+        }
+      } catch (e) { console.log('저녁 수동 증액 감시 실패(규칙 실행 무영향):', e.message); }
+    }
+
     // Supabase에 실행 로그 저장
     if (sbHeaders && results.length) {
       const executedAt = new Date().toISOString();
@@ -662,8 +710,9 @@ export default async function handler(req, res) {
       time: timeLabel,
       activeRules: activeRules.map(r => r.label),
       results,
-      changed: results.filter(r => r.success).length,
+      changed: results.filter(r => r.success && !r.watch).length,
       failed: results.filter(r => !r.success).length,
+      watched: results.filter(r => r.watch).length,
     });
 
   } catch (e) {
