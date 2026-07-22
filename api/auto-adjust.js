@@ -271,8 +271,8 @@ export default async function handler(req, res) {
       calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
     },
     {
-      id: 'r16', triggerMin: 21*60, dir: 'dn',
-      label: '오후 9:00 · ROAS ≤200%(쉬는날 ≤240%) → 구매전환값의 50%',
+      id: 'r16', triggerMin: 20*60, dir: 'dn',
+      label: '오후 8:00 · ROAS ≤200%(쉬는날 ≤240%) → 구매전환값의 50%',
       check: (ad) => ad.roas <= LADDER_MAX && ad.roas > 0 && ad.purchaseValue > 0,
       calc:  (ad) => Math.round(ad.purchaseValue * 0.5 / 1000) * 1000,
     },
